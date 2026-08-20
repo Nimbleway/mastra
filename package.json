@@ -1,0 +1,72 @@
+{
+  "name": "@nimble-way/mastra",
+  "version": "0.1.0",
+  "description": "Nimble deep-research Agent runs (Agent API V2) as ready-made typed tools for Mastra agents.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": "Nimble",
+  "homepage": "https://github.com/Nimbleway/mastra",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Nimbleway/mastra.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Nimbleway/mastra/issues"
+  },
+  "keywords": [
+    "nimble",
+    "mastra",
+    "ai",
+    "web-search",
+    "deep-research",
+    "tool",
+    "llm",
+    "agent"
+  ],
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@nimble-way/nimble-js": "^1.2.0"
+  },
+  "peerDependencies": {
+    "@mastra/core": "^1.56.0",
+    "zod": "^3.25.0 || ^4.0.0"
+  },
+  "devDependencies": {
+    "@mastra/core": "^1.56.0",
+    "@types/node": "^22.0.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "zod": "^3.25.76"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}
