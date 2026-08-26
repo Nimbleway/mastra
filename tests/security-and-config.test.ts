@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { inspect } from 'node:util';
 import {
   createNimbleAgentTools,
   nimbleAgentRunResultTool,
@@ -148,6 +149,29 @@ describe('the API key stays server-only', () => {
     expect(cause.message).not.toContain(FAKE_KEY);
     expect(String(cause.stack ?? '')).not.toContain(FAKE_KEY);
     expect(JSON.stringify(cause)).not.toContain(FAKE_KEY);
+  });
+
+  it('is scrubbed when Error.cause is the primitive key value', async () => {
+    const leaky = new Error('request failed', { cause: FAKE_KEY });
+    const err = await nimbleAgentStartRunTool({
+      agentId: AGENT_ID,
+      apiKey: FAKE_KEY,
+      client: mockClient({
+        create: async () => {
+          throw leaky;
+        },
+      }),
+    })
+      .execute!({ task: 't' }, CTX)
+      .then(
+        () => {
+          throw new Error('expected failure');
+        },
+        (e: unknown) => e as NimbleAgentRunError,
+      );
+
+    expect(inspect(err, { depth: 5 })).not.toContain(FAKE_KEY);
+    expect(inspect(err.cause, { depth: 5 })).not.toContain(FAKE_KEY);
   });
 
   it('keeps a clean cause untouched for full debug fidelity', async () => {

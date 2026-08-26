@@ -117,7 +117,8 @@ function scrub(text: string, apiKey: string | undefined): string {
 
 /** True when the key appears anywhere in the error's message/stack/body chain. */
 function keyInErrorChain(err: unknown, apiKey: string, depth = 0): boolean {
-  if (err === null || typeof err !== 'object' || depth > 4) return false;
+  if (depth > 4 || err === null || err === undefined) return false;
+  if (typeof err !== 'object') return String(err).includes(apiKey);
   const candidate = err as Error & { cause?: unknown };
   if (typeof candidate.message === 'string' && candidate.message.includes(apiKey)) return true;
   if (typeof candidate.stack === 'string' && candidate.stack.includes(apiKey)) return true;
@@ -293,10 +294,14 @@ function assertKnownStatus(
 
 /** Fail closed when a read/result body does not belong to the requested run. */
 function assertMatchingRunIds(
-  run: NimbleAgentRawRun,
+  run: unknown,
   ids: { runId: string; agentId: string },
-): void {
-  if (run.id !== ids.runId || run.web_search_agent_id !== ids.agentId) {
+): asserts run is NimbleAgentRawRun {
+  if (typeof run !== 'object' || run === null) {
+    throw protocolError(ids);
+  }
+  const candidate = run as Partial<NimbleAgentRawRun>;
+  if (candidate.id !== ids.runId || candidate.web_search_agent_id !== ids.agentId) {
     throw new NimbleAgentRunError(
       `Nimble agent run ${ids.runId} returned mismatched identifiers.`,
       { reason: 'protocol', runId: ids.runId, agentId: ids.agentId },
@@ -677,14 +682,20 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
         throw protocolError(ids);
       }
       if (!('output' in result)) {
-        // Failed form: { run, error }. Validate the run before dereferencing
-        // so a run-less body maps to 'protocol', not a TypeError.
-        if (typeof result.run?.status !== 'string') throw protocolError(ids);
-        assertMatchingRunIds(result.run, ids);
+        // Failed form: { run, error }. Require the complete envelope and a
+        // failed/cancelled terminal status before mapping it as a run failure.
+        const failed = asFailedResult(result);
+        if (
+          !failed ||
+          (failed.run.status !== 'failed' && failed.run.status !== 'cancelled')
+        ) {
+          throw protocolError(ids);
+        }
+        assertMatchingRunIds(failed.run, ids);
         throw terminalFailure(
-          result.run,
+          failed.run,
           ids,
-          result.error?.message,
+          failed.error.message,
           apiKey,
           allowErrorDetails,
         );

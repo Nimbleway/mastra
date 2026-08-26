@@ -159,6 +159,16 @@ describe('status tool', () => {
       ),
     ).rejects.toMatchObject({ reason: 'protocol', runId: RUN_ID, agentId: AGENT_ID });
   });
+
+  it('maps a null status response to a protocol error with requested ids', async () => {
+    const client = mockClient({ get: async () => null as never });
+    await expect(
+      nimbleAgentRunStatusTool({ agentId: AGENT_ID, client }).execute!(
+        { runId: RUN_ID },
+        CTX,
+      ),
+    ).rejects.toMatchObject({ reason: 'protocol', runId: RUN_ID, agentId: AGENT_ID });
+  });
 });
 
 describe('result tool', () => {
@@ -309,6 +319,9 @@ describe('result tool', () => {
     const cases: unknown[] = [
       null,
       {},
+      { run: makeRun({ status: 'completed' }) },
+      { run: makeRun({ status: 'completed' }), error: { message: 'not a failure' } },
+      { run: makeRun({ status: 'failed' }), error: {} },
       { run: makeRun({ status: 'completed' }), output: { content: 42 } },
       { run: makeRun({ status: 'completed' }), output: { type: 'text', content: 'x' } }, // no trust
     ];
