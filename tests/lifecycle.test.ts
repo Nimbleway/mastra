@@ -324,6 +324,15 @@ describe('result tool', () => {
       { run: makeRun({ status: 'failed' }), error: {} },
       { run: makeRun({ status: 'completed' }), output: { content: 42 } },
       { run: makeRun({ status: 'completed' }), output: { type: 'text', content: 'x' } }, // no trust
+      { run: makeRun({ status: 'completed' }), output: { type: 'text', content: 'x', trust: {} } },
+      {
+        run: makeRun({ status: 'completed' }),
+        output: {
+          type: 'text',
+          content: 'x',
+          trust: { ...makeTextResult().output.trust, confidence: 'certain' },
+        },
+      },
     ];
     for (const payload of cases) {
       const client = mockClient({

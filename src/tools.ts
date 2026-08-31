@@ -7,6 +7,7 @@ import {
   nimbleAgentRunStatusOutputSchema,
   nimbleAgentStartRunInputSchema,
   nimbleAgentStartRunOutputSchema,
+  nimbleAgentTrustSchema,
 } from './schemas';
 import type {
   NimbleAgentEffort,
@@ -157,7 +158,21 @@ function toAgentError(
     allowErrorDetails: boolean;
   },
 ): NimbleAgentRunError {
-  if (err instanceof NimbleAgentRunError) return err;
+  if (err instanceof NimbleAgentRunError) {
+    const runRef = context.runId ? ` (run ${context.runId})` : '';
+    const message = context.allowErrorDetails
+      ? scrub(err.message, context.apiKey)
+      : `Nimble agent ${context.verb} failed${runRef}: details withheld because the injected client credential was not provided for redaction`;
+    return new NimbleAgentRunError(message, {
+      reason: err.reason,
+      runId: err.runId ?? context.runId,
+      agentId: err.agentId ?? context.agentId,
+      runStatus: err.runStatus,
+      status: err.status,
+      createOutcome: err.createOutcome,
+      cause: context.allowErrorDetails ? sanitizeCause(err.cause, context.apiKey) : undefined,
+    });
+  }
   const message = context.allowErrorDetails
     ? scrub(err instanceof Error ? err.message : String(err), context.apiKey)
     : 'details withheld because the injected client credential was not provided for redaction';
@@ -196,7 +211,10 @@ function toCreateError(
   err: unknown,
   context: { agentId: string; apiKey?: string; allowErrorDetails: boolean },
 ): NimbleAgentRunError {
-  const outcome = classifyCreateOutcome(err);
+  const outcome =
+    err instanceof NimbleAgentRunError && err.createOutcome
+      ? err.createOutcome
+      : classifyCreateOutcome(err);
   const message = context.allowErrorDetails
     ? scrub(err instanceof Error ? err.message : String(err), context.apiKey)
     : 'request failed; details withheld because the injected client credential was not provided for redaction';
@@ -207,11 +225,16 @@ function toCreateError(
         'another run — list recent runs for this agent (or check the Nimble console) to ' +
         'reconcile before creating again.';
   return new NimbleAgentRunError(`Nimble agent run creation failed: ${message} ${guidance}`, {
-    reason: 'request',
-    agentId: context.agentId,
-    status: readStatus(err),
+    reason: err instanceof NimbleAgentRunError ? err.reason : 'request',
+    runId: err instanceof NimbleAgentRunError ? err.runId : undefined,
+    agentId:
+      err instanceof NimbleAgentRunError ? (err.agentId ?? context.agentId) : context.agentId,
+    runStatus: err instanceof NimbleAgentRunError ? err.runStatus : undefined,
+    status: err instanceof NimbleAgentRunError ? err.status : readStatus(err),
     createOutcome: outcome,
-    cause: context.allowErrorDetails ? sanitizeCause(err, context.apiKey) : undefined,
+    cause: context.allowErrorDetails
+      ? sanitizeCause(err instanceof NimbleAgentRunError ? err.cause : err, context.apiKey)
+      : undefined,
   });
 }
 
@@ -387,15 +410,16 @@ function toAgentOutput(
   }
   // `trust` is required on both output forms; a body missing it would make the
   // typed output lie (non-null field holding undefined).
-  if (typeof raw.trust !== 'object' || raw.trust === null) {
+  const parsedTrust = nimbleAgentTrustSchema.safeParse(raw.trust);
+  if (!parsedTrust.success) {
     throw protocolError(ids, 'completed');
   }
   const kind = raw.type ?? (typeof raw.content === 'string' ? 'text' : 'json');
   if (kind === 'text' && typeof raw.content === 'string') {
-    return { type: 'text', text: raw.content, trust: raw.trust };
+    return { type: 'text', text: raw.content, trust: parsedTrust.data };
   }
   if (kind === 'json' && typeof raw.content === 'object' && raw.content !== null) {
-    return { type: 'json', json: raw.content, trust: raw.trust };
+    return { type: 'json', json: raw.content, trust: parsedTrust.data };
   }
   throw protocolError(ids, 'completed');
 }
@@ -738,13 +762,20 @@ export function createNimbleAgentTools(config: NimbleAgentToolsConfig = {}) {
   // resolved once and connection reuse applies. Lazy so the factory itself
   // never throws in key-less environments.
   let shared: NimbleAgentRunsClient | undefined;
+  let sharedApiKey: string | undefined;
   const sharedConfig: NimbleAgentToolsConfig = {
     ...config,
+    get apiKey(): string | undefined {
+      if (config.client) return config.apiKey;
+      return sharedApiKey ?? config.apiKey ?? process.env.NIMBLE_API_KEY;
+    },
     get client(): NimbleAgentRunsClient | undefined {
       if (config.client) return config.client;
+      if (shared) return shared;
       const apiKey = config.apiKey ?? process.env.NIMBLE_API_KEY;
       if (!apiKey) return undefined; // let resolveAgentContext raise NimbleConfigError
-      shared ??= createNimbleClient(
+      sharedApiKey = apiKey;
+      shared = createNimbleClient(
         apiKey,
         config.clientOptions,
       ) as unknown as NimbleAgentRunsClient;

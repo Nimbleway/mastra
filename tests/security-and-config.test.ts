@@ -223,6 +223,85 @@ describe('the API key stays server-only', () => {
     expect(err.cause).toBeUndefined();
     expect(String(err)).not.toContain(unknownCredential);
   });
+
+  it('sanitizes an injected NimbleAgentRunError instead of returning it unchanged', async () => {
+    const { NimbleAgentRunError } = await import('../src/errors');
+    const leaky = new NimbleAgentRunError(`request exposed ${FAKE_KEY}`, {
+      reason: 'request',
+      runId: RUN_ID,
+      agentId: AGENT_ID,
+      status: 401,
+      cause: new Error(`nested ${FAKE_KEY}`),
+    });
+    const err = await nimbleAgentRunStatusTool({
+      agentId: AGENT_ID,
+      apiKey: FAKE_KEY,
+      client: mockClient({ get: async () => { throw leaky; } }),
+    }).execute!({ runId: RUN_ID }, CTX).then(
+      () => { throw new Error('expected failure'); },
+      (e: unknown) => e as NimbleAgentRunError,
+    );
+
+    expect(err).not.toBe(leaky);
+    expect(err).toMatchObject({ reason: 'request', runId: RUN_ID, agentId: AGENT_ID, status: 401 });
+    expect(inspect(err, { depth: 5 })).not.toContain(FAKE_KEY);
+  });
+
+  it('withholds an injected NimbleAgentRunError when its credential is unknown', async () => {
+    const { NimbleAgentRunError } = await import('../src/errors');
+    const unknownCredential = 'credential-owned-by-injected-client';
+    const leaky = new NimbleAgentRunError(`request exposed ${unknownCredential}`, {
+      reason: 'request',
+      runId: RUN_ID,
+      agentId: AGENT_ID,
+      cause: new Error(`nested ${unknownCredential}`),
+    });
+    const err = await nimbleAgentRunStatusTool({
+      agentId: AGENT_ID,
+      client: mockClient({ get: async () => { throw leaky; } }),
+    }).execute!({ runId: RUN_ID }, CTX).then(
+      () => { throw new Error('expected failure'); },
+      (e: unknown) => e as NimbleAgentRunError,
+    );
+
+    expect(err).not.toBe(leaky);
+    expect(err).toMatchObject({ reason: 'request', runId: RUN_ID, agentId: AGENT_ID });
+    expect(err.message).toContain('details withheld');
+    expect(err.cause).toBeUndefined();
+    expect(inspect(err, { depth: 5 })).not.toContain(unknownCredential);
+  });
+
+  it('sanitizes and preserves structured fields from a create NimbleAgentRunError', async () => {
+    const { NimbleAgentRunError } = await import('../src/errors');
+    const leaky = new NimbleAgentRunError(`create exposed ${FAKE_KEY}`, {
+      reason: 'request',
+      runId: RUN_ID,
+      agentId: AGENT_ID,
+      runStatus: 'queued',
+      status: 503,
+      createOutcome: 'unknown',
+      cause: new Error(`nested ${FAKE_KEY}`),
+    });
+    const err = await nimbleAgentStartRunTool({
+      agentId: AGENT_ID,
+      apiKey: FAKE_KEY,
+      client: mockClient({ create: async () => { throw leaky; } }),
+    }).execute!({ task: 't' }, CTX).then(
+      () => { throw new Error('expected failure'); },
+      (e: unknown) => e as NimbleAgentRunError,
+    );
+
+    expect(err).not.toBe(leaky);
+    expect(err).toMatchObject({
+      reason: 'request',
+      runId: RUN_ID,
+      agentId: AGENT_ID,
+      runStatus: 'queued',
+      status: 503,
+      createOutcome: 'unknown',
+    });
+    expect(inspect(err, { depth: 5 })).not.toContain(FAKE_KEY);
+  });
 });
 
 describe('trust metadata passthrough', () => {
@@ -301,6 +380,26 @@ describe('createNimbleAgentTools (convenience factory)', () => {
     await expect(tools.nimbleAgentStartRun.execute!({ task: 't' }, CTX)).resolves.toMatchObject({
       runId: RUN_ID,
     });
+    vi.unstubAllEnvs();
+  });
+
+  it('retains the environment key paired with its cached package-owned client', async () => {
+    vi.stubEnv('NIMBLE_API_KEY', FAKE_KEY);
+    const fetchMock = vi.fn(async () => {
+      throw new Error(`server echoed ${FAKE_KEY}`);
+    });
+    const tools = createNimbleAgentTools({
+      agentId: AGENT_ID,
+      clientOptions: { fetch: fetchMock as unknown as typeof fetch },
+    });
+    const err = await tools.nimbleAgentStartRun.execute!({ task: 't' }, CTX).then(
+      () => { throw new Error('expected failure'); },
+      (e: unknown) => e as NimbleAgentRunError,
+    );
+
+    expect(err.message).not.toContain('details withheld');
+    expect(err.cause).toBeDefined();
+    expect(inspect(err, { depth: 5 })).not.toContain(FAKE_KEY);
     vi.unstubAllEnvs();
   });
 });
