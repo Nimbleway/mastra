@@ -269,6 +269,21 @@ describe('result tool', () => {
     ).rejects.toMatchObject({ reason: 'failed', message: expect.stringContaining('wrapped failure') });
   });
 
+  it.each(['queued', 'running', 'completed'] as const)('rejects a 422 envelope with non-failure status %s', async (status) => {
+    const client = mockClient({
+      get: async () => makeRun({ status: 'completed', is_active: false }),
+      result: async () => {
+        throw httpError(422, {
+          ...makeFailedResult('contradictory envelope'),
+          run: makeRun({ status, is_active: status === 'queued' || status === 'running' }),
+        });
+      },
+    });
+    await expect(
+      nimbleAgentRunResultTool({ ...cfg, client }).execute!({ runId: RUN_ID }, CTX),
+    ).rejects.toMatchObject({ reason: 'protocol', runId: RUN_ID, agentId: AGENT_ID });
+  });
+
   it('re-validates the run embedded in the result payload (eventual consistency)', async () => {
     const client = mockClient({
       get: async () => makeRun({ status: 'completed', is_active: false }),

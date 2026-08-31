@@ -70,6 +70,45 @@ describe('run creation is one-shot', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(out).toMatchObject({ runId: makeRun().id, agentId: AGENT_ID, status: 'queued' });
   });
+
+  it.each([null, {}, makeRun({ id: '' })])('maps malformed successful create response %# to a protocol error', async (body) => {
+    const fetchMock = vi.fn(async () => jsonResponse(200, body));
+    const err = await startToolWithFetch(fetchMock as unknown as typeof fetch)
+      .execute!({ task: 'research x' }, CTX)
+      .then(
+        () => { throw new Error('expected failure'); },
+        (error: unknown) => error as NimbleAgentRunError,
+      );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(err).toMatchObject({
+      reason: 'protocol',
+      agentId: AGENT_ID,
+      createOutcome: 'unknown',
+    });
+    expect(err.message).toContain('reconcile recent runs before creating again');
+    expect(err).not.toBeInstanceOf(TypeError);
+  });
+
+  it('does not expose an untrusted status from an accepted create response', async () => {
+    const leakyStatus = `status-${FAKE_KEY}`;
+    const fetchMock = vi.fn(async () => jsonResponse(200, makeRun({ status: leakyStatus as never })));
+    const err = await startToolWithFetch(fetchMock as unknown as typeof fetch)
+      .execute!({ task: 'research x' }, CTX)
+      .then(
+        () => { throw new Error('expected failure'); },
+        (error: unknown) => error as NimbleAgentRunError,
+      );
+
+    expect(err).toMatchObject({
+      reason: 'protocol',
+      runId: makeRun().id,
+      agentId: AGENT_ID,
+      createOutcome: 'unknown',
+    });
+    expect(err.runStatus).toBeUndefined();
+    expect(err.message).not.toContain(leakyStatus);
+    expect(err.message).not.toContain(FAKE_KEY);
+  });
 });
 
 describe('ambiguous-outcome guidance', () => {

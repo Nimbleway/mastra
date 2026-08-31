@@ -31,7 +31,7 @@ import type {
   NimbleAgentWaitOptions,
 } from './schemas';
 import { NimbleAgentRunError, NimbleConfigError } from './errors';
-import type { NimbleAgentCreateOutcome } from './errors';
+import type { NimbleAgentCreateOutcome, NimbleAgentRunErrorReason } from './errors';
 
 /**
  * Agent tool defaults. `effortCap` bounds only the *model's* effort choice;
@@ -118,8 +118,11 @@ function scrub(text: string, apiKey: string | undefined): string {
 
 /** True when the key appears anywhere in the error's message/stack/body chain. */
 function keyInErrorChain(err: unknown, apiKey: string, depth = 0): boolean {
-  if (depth > 4 || err === null || err === undefined) return false;
+  if (err === null || err === undefined) return false;
   if (typeof err !== 'object') return String(err).includes(apiKey);
+  // The remainder of an over-deep object chain cannot be proven clean. Fail
+  // closed instead of retaining a potentially credential-bearing raw cause.
+  if (depth > 4) return true;
   const candidate = err as Error & { cause?: unknown };
   if (typeof candidate.message === 'string' && candidate.message.includes(apiKey)) return true;
   if (typeof candidate.stack === 'string' && candidate.stack.includes(apiKey)) return true;
@@ -148,6 +151,22 @@ function sanitizeCause(err: unknown, apiKey: string | undefined): unknown {
   return copy;
 }
 
+/** Keep untrusted string metadata only when it is safe to expose. */
+function safeErrorMetadata(value: unknown, apiKey: string | undefined): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  return apiKey && value.includes(apiKey) ? undefined : value;
+}
+
+function safeErrorReason(value: unknown): NimbleAgentRunErrorReason {
+  return value === 'failed' || value === 'cancelled' || value === 'protocol' || value === 'request'
+    ? value
+    : 'request';
+}
+
+function safeCreateOutcome(value: unknown): NimbleAgentCreateOutcome | undefined {
+  return value === 'unknown' || value === 'not-created' ? value : undefined;
+}
+
 function toAgentError(
   err: unknown,
   context: {
@@ -164,12 +183,17 @@ function toAgentError(
       ? scrub(err.message, context.apiKey)
       : `Nimble agent ${context.verb} failed${runRef}: details withheld because the injected client credential was not provided for redaction`;
     return new NimbleAgentRunError(message, {
-      reason: err.reason,
-      runId: err.runId ?? context.runId,
-      agentId: err.agentId ?? context.agentId,
-      runStatus: err.runStatus,
-      status: err.status,
-      createOutcome: err.createOutcome,
+      reason: safeErrorReason(err.reason),
+      // Requested identifiers are trusted and authoritative on read paths.
+      // Never copy model-visible metadata from an injected error when its
+      // credential is unavailable for redaction.
+      runId: context.runId,
+      agentId: context.agentId,
+      runStatus: context.allowErrorDetails
+        ? safeErrorMetadata(err.runStatus, context.apiKey)
+        : undefined,
+      status: typeof err.status === 'number' ? err.status : undefined,
+      createOutcome: safeCreateOutcome(err.createOutcome),
       cause: context.allowErrorDetails ? sanitizeCause(err.cause, context.apiKey) : undefined,
     });
   }
@@ -212,8 +236,8 @@ function toCreateError(
   context: { agentId: string; apiKey?: string; allowErrorDetails: boolean },
 ): NimbleAgentRunError {
   const outcome =
-    err instanceof NimbleAgentRunError && err.createOutcome
-      ? err.createOutcome
+    err instanceof NimbleAgentRunError && safeCreateOutcome(err.createOutcome)
+      ? safeCreateOutcome(err.createOutcome)!
       : classifyCreateOutcome(err);
   const message = context.allowErrorDetails
     ? scrub(err instanceof Error ? err.message : String(err), context.apiKey)
@@ -225,12 +249,20 @@ function toCreateError(
         'another run — list recent runs for this agent (or check the Nimble console) to ' +
         'reconcile before creating again.';
   return new NimbleAgentRunError(`Nimble agent run creation failed: ${message} ${guidance}`, {
-    reason: err instanceof NimbleAgentRunError ? err.reason : 'request',
-    runId: err instanceof NimbleAgentRunError ? err.runId : undefined,
-    agentId:
-      err instanceof NimbleAgentRunError ? (err.agentId ?? context.agentId) : context.agentId,
-    runStatus: err instanceof NimbleAgentRunError ? err.runStatus : undefined,
-    status: err instanceof NimbleAgentRunError ? err.status : readStatus(err),
+    reason: err instanceof NimbleAgentRunError ? safeErrorReason(err.reason) : 'request',
+    runId:
+      context.allowErrorDetails && err instanceof NimbleAgentRunError
+        ? safeErrorMetadata(err.runId, context.apiKey)
+        : undefined,
+    agentId: context.agentId,
+    runStatus:
+      context.allowErrorDetails && err instanceof NimbleAgentRunError
+        ? safeErrorMetadata(err.runStatus, context.apiKey)
+        : undefined,
+    status:
+      err instanceof NimbleAgentRunError && typeof err.status === 'number'
+        ? err.status
+        : readStatus(err),
     createOutcome: outcome,
     cause: context.allowErrorDetails
       ? sanitizeCause(err instanceof NimbleAgentRunError ? err.cause : err, context.apiKey)
@@ -333,11 +365,33 @@ function assertMatchingRunIds(
 }
 
 function assertCreatedRunIdentity(run: NimbleAgentRawRun, agentId: string): void {
-  if (!run.id || !run.web_search_agent_id || run.web_search_agent_id !== agentId) {
-    throw new NimbleAgentRunError('Nimble agent run creation returned invalid identifiers.', {
-      reason: 'protocol',
-      agentId,
-    });
+  if (
+    typeof run.id !== 'string' ||
+    run.id.length === 0 ||
+    typeof run.web_search_agent_id !== 'string' ||
+    run.web_search_agent_id.length === 0 ||
+    run.web_search_agent_id !== agentId
+  ) {
+    throw new NimbleAgentRunError(
+      'Nimble agent run creation returned invalid identifiers after the request was accepted. ' +
+        'The run may have been created server-side; reconcile recent runs before creating again.',
+      { reason: 'protocol', agentId, createOutcome: 'unknown' },
+    );
+  }
+}
+
+function assertCreatedRunStatus(run: NimbleAgentRawRun, agentId: string): void {
+  if (!LIFECYCLE_STATUSES.has(run.status)) {
+    throw new NimbleAgentRunError(
+      'Nimble agent run creation returned an unknown status after the request was accepted. ' +
+        'The run may have been created server-side; reconcile recent runs before creating again.',
+      {
+        reason: 'protocol',
+        runId: typeof run.id === 'string' ? run.id : undefined,
+        agentId,
+        createOutcome: 'unknown',
+      },
+    );
   }
 }
 
@@ -539,8 +593,15 @@ export function nimbleAgentStartRunTool(config: NimbleAgentStartRunConfig = {}) 
       } catch (err) {
         throw toCreateError(err, { agentId, apiKey, allowErrorDetails });
       }
+      if (typeof run !== 'object' || run === null) {
+        throw new NimbleAgentRunError(
+          'Nimble agent run creation returned a malformed payload after the request was accepted. ' +
+            'The run may have been created server-side; reconcile recent runs before creating again.',
+          { reason: 'protocol', agentId, createOutcome: 'unknown' },
+        );
+      }
       assertCreatedRunIdentity(run, agentId);
-      assertKnownStatus(run, { runId: run.id, agentId });
+      assertCreatedRunStatus(run, agentId);
       return toStartOutput(run);
     },
   });
@@ -685,6 +746,9 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
           const failed = readFailedResultBody(err);
           if (failed) {
             assertMatchingRunIds(failed.run, ids);
+            if (failed.run.status !== 'failed' && failed.run.status !== 'cancelled') {
+              throw protocolError(ids);
+            }
             throw terminalFailure(
               failed.run,
               ids,

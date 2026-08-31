@@ -247,6 +247,21 @@ describe('the API key stays server-only', () => {
     expect(inspect(err, { depth: 5 })).not.toContain(FAKE_KEY);
   });
 
+  it('fails closed for credential-bearing causes beyond the inspection depth', async () => {
+    let cause: unknown = new Error(`deep ${FAKE_KEY}`);
+    for (let i = 0; i < 7; i += 1) cause = new Error(`layer ${i}`, { cause });
+    const err = await nimbleAgentRunStatusTool({
+      agentId: AGENT_ID,
+      apiKey: FAKE_KEY,
+      client: mockClient({ get: async () => { throw cause; } }),
+    }).execute!({ runId: RUN_ID }, CTX).then(
+      () => { throw new Error('expected failure'); },
+      (e: unknown) => e as NimbleAgentRunError,
+    );
+
+    expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
+  });
+
   it('withholds an injected NimbleAgentRunError when its credential is unknown', async () => {
     const { NimbleAgentRunError } = await import('../src/errors');
     const unknownCredential = 'credential-owned-by-injected-client';
@@ -269,6 +284,81 @@ describe('the API key stays server-only', () => {
     expect(err.message).toContain('details withheld');
     expect(err.cause).toBeUndefined();
     expect(inspect(err, { depth: 5 })).not.toContain(unknownCredential);
+  });
+
+  it('does not copy untrusted metadata from an injected error without a paired key', async () => {
+    const { NimbleAgentRunError } = await import('../src/errors');
+    const unknownCredential = 'credential-owned-by-injected-client';
+    const leaky = new NimbleAgentRunError('request failed', {
+      reason: 'request',
+      runId: `run-${unknownCredential}`,
+      agentId: `agent-${unknownCredential}`,
+      runStatus: `status-${unknownCredential}`,
+    });
+    const err = await nimbleAgentRunStatusTool({
+      agentId: AGENT_ID,
+      client: mockClient({ get: async () => { throw leaky; } }),
+    }).execute!({ runId: RUN_ID }, CTX).then(
+      () => { throw new Error('expected failure'); },
+      (e: unknown) => e as NimbleAgentRunError,
+    );
+
+    expect(err).toMatchObject({ runId: RUN_ID, agentId: AGENT_ID });
+    expect(err.runStatus).toBeUndefined();
+    expect(inspect(err, { depth: 10 })).not.toContain(unknownCredential);
+  });
+
+  it('drops credential-bearing metadata from a paired injected create error', async () => {
+    const { NimbleAgentRunError } = await import('../src/errors');
+    const leaky = new NimbleAgentRunError('create failed', {
+      reason: 'request',
+      runId: `run-${FAKE_KEY}`,
+      agentId: `agent-${FAKE_KEY}`,
+      runStatus: `status-${FAKE_KEY}`,
+      createOutcome: 'unknown',
+    });
+    const err = await nimbleAgentStartRunTool({
+      agentId: AGENT_ID,
+      apiKey: FAKE_KEY,
+      client: mockClient({ create: async () => { throw leaky; } }),
+    }).execute!({ task: 't' }, CTX).then(
+      () => { throw new Error('expected failure'); },
+      (e: unknown) => e as NimbleAgentRunError,
+    );
+
+    expect(err.runId).toBeUndefined();
+    expect(err.agentId).toBe(AGENT_ID);
+    expect(err.runStatus).toBeUndefined();
+    expect(inspect(err, { depth: 10 })).not.toContain(FAKE_KEY);
+  });
+
+  it('fails closed on runtime-invalid injected error metadata', async () => {
+    const { NimbleAgentRunError } = await import('../src/errors');
+    const malformed = new NimbleAgentRunError('request failed', {
+      reason: 'request',
+    });
+    Object.assign(malformed, {
+      reason: { secret: FAKE_KEY },
+      runId: { secret: FAKE_KEY },
+      agentId: { secret: FAKE_KEY },
+      runStatus: { secret: FAKE_KEY },
+      status: { secret: FAKE_KEY },
+      createOutcome: { secret: FAKE_KEY },
+    });
+    const err = await nimbleAgentRunStatusTool({
+      agentId: AGENT_ID,
+      apiKey: FAKE_KEY,
+      client: mockClient({ get: async () => { throw malformed; } }),
+    }).execute!({ runId: RUN_ID }, CTX).then(
+      () => { throw new Error('expected failure'); },
+      (e: unknown) => e as NimbleAgentRunError,
+    );
+
+    expect(err).toMatchObject({ reason: 'request', runId: RUN_ID, agentId: AGENT_ID });
+    expect(err.runStatus).toBeUndefined();
+    expect(err.status).toBeUndefined();
+    expect(err.createOutcome).toBeUndefined();
+    expect(inspect(err, { depth: 10 })).not.toContain(FAKE_KEY);
   });
 
   it('sanitizes and preserves structured fields from a create NimbleAgentRunError', async () => {
