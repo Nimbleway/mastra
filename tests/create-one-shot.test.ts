@@ -71,7 +71,14 @@ describe('run creation is one-shot', () => {
     expect(out).toMatchObject({ runId: makeRun().id, agentId: AGENT_ID, status: 'queued' });
   });
 
-  it.each([null, {}, makeRun({ id: '' })])('maps malformed successful create response %# to a protocol error', async (body) => {
+  it.each([
+    null,
+    {},
+    makeRun({ id: '' }),
+    makeRun({ interaction_id: undefined as never }),
+    makeRun({ effort: 'unknown' as never }),
+    makeRun({ created_at: undefined as never }),
+  ])('maps malformed successful create response %# to a protocol error', async (body) => {
     const fetchMock = vi.fn(async () => jsonResponse(200, body));
     const err = await startToolWithFetch(fetchMock as unknown as typeof fetch)
       .execute!({ task: 'research x' }, CTX)
@@ -101,13 +108,34 @@ describe('run creation is one-shot', () => {
 
     expect(err).toMatchObject({
       reason: 'protocol',
-      runId: makeRun().id,
       agentId: AGENT_ID,
       createOutcome: 'unknown',
     });
+    expect(err.runId).toBeUndefined();
     expect(err.runStatus).toBeUndefined();
     expect(err.message).not.toContain(leakyStatus);
     expect(err.message).not.toContain(FAKE_KEY);
+  });
+
+  it('does not expose a credential-bearing run id from an accepted create response', async () => {
+    const leakyRunId = `task_run_${FAKE_KEY}`;
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(200, makeRun({ id: leakyRunId, status: 'unknown' as never })),
+    );
+    const err = await startToolWithFetch(fetchMock as unknown as typeof fetch)
+      .execute!({ task: 'research x' }, CTX)
+      .then(
+        () => { throw new Error('expected failure'); },
+        (error: unknown) => error as NimbleAgentRunError,
+      );
+
+    expect(err).toMatchObject({
+      reason: 'protocol',
+      agentId: AGENT_ID,
+      createOutcome: 'unknown',
+    });
+    expect(err.runId).toBeUndefined();
+    expect(JSON.stringify(err)).not.toContain(FAKE_KEY);
   });
 });
 

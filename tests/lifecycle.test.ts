@@ -9,6 +9,7 @@ import type { NimbleAgentRunCompletedOutput, NimbleAgentRunCreateBody } from '..
 import {
   AGENT_ID,
   CTX,
+  FAKE_KEY,
   RUN_ID,
   httpError,
   makeFailedResult,
@@ -358,6 +359,36 @@ describe('result tool', () => {
         nimbleAgentRunResultTool({ ...cfg, client }).execute!({ runId: RUN_ID }, CTX),
       ).rejects.toMatchObject({ reason: 'protocol' });
     }
+  });
+
+  it.each([
+    { effort: undefined },
+    { created_at: undefined },
+    { is_active: 'yes' },
+    { error: { message: 42, ref_id: RUN_ID } },
+  ])('maps malformed read run field %# to a protocol error', async (patch) => {
+    const client = mockClient({
+      get: async () => makeRun(patch as never),
+    });
+    await expect(
+      nimbleAgentRunStatusTool({ ...cfg, client }).execute!({ runId: RUN_ID }, CTX),
+    ).rejects.toMatchObject({ reason: 'protocol', runId: RUN_ID, agentId: AGENT_ID });
+  });
+
+  it('does not expose an unknown read status in a protocol error', async () => {
+    const leakyStatus = `status-${FAKE_KEY}`;
+    const client = mockClient({
+      get: async () => makeRun({ status: leakyStatus as never }),
+    });
+    const err = await nimbleAgentRunStatusTool({ ...cfg, client })
+      .execute!({ runId: RUN_ID }, CTX)
+      .then(
+        () => { throw new Error('expected failure'); },
+        (error: unknown) => error as NimbleAgentRunError,
+      );
+    expect(err.runStatus).toBeUndefined();
+    expect(err.message).not.toContain(leakyStatus);
+    expect(JSON.stringify(err)).not.toContain(FAKE_KEY);
   });
 
   it('result body in the failed form ({ run, error }) throws the terminal failure', async () => {

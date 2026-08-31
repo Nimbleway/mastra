@@ -2,6 +2,7 @@ import { createTool } from '@mastra/core/tools';
 import { createNimbleClient } from './client';
 import {
   NIMBLE_AGENT_RUN_STATUSES,
+  NIMBLE_AGENT_EFFORTS,
   nimbleAgentRunIdInputSchema,
   nimbleAgentRunResultOutputSchema,
   nimbleAgentRunStatusOutputSchema,
@@ -58,6 +59,7 @@ const EFFORT_ORDER: Record<NimbleAgentEffort, number> = {
 const LIFECYCLE_STATUSES: ReadonlySet<NimbleAgentRunLifecycleStatus> = new Set(
   NIMBLE_AGENT_RUN_STATUSES,
 );
+const EFFORTS: ReadonlySet<NimbleAgentEffort> = new Set(NIMBLE_AGENT_EFFORTS);
 
 function capEffort(requested: NimbleAgentEffort, cap: NimbleAgentEffort): NimbleAgentEffort {
   return EFFORT_ORDER[requested] > EFFORT_ORDER[cap] ? cap : requested;
@@ -335,16 +337,36 @@ function assertKnownStatus(
   ids: { runId: string; agentId: string },
 ): void {
   if (!LIFECYCLE_STATUSES.has(run.status)) {
-    throw new NimbleAgentRunError(
-      `Nimble agent run ${ids.runId} reported unknown status "${String(run.status)}".`,
-      {
-        reason: 'protocol',
-        runId: ids.runId,
-        agentId: ids.agentId,
-        runStatus: String(run.status),
-      },
-    );
+    throw protocolError(ids);
   }
+}
+
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || value === null || typeof value === 'string';
+}
+
+function hasValidRunFields(run: Partial<NimbleAgentRawRun>): boolean {
+  const error = run.error;
+  return (
+    typeof run.id === 'string' &&
+    run.id.length > 0 &&
+    typeof run.web_search_agent_id === 'string' &&
+    run.web_search_agent_id.length > 0 &&
+    typeof run.interaction_id === 'string' &&
+    run.interaction_id.length > 0 &&
+    typeof run.is_active === 'boolean' &&
+    EFFORTS.has(run.effort as NimbleAgentEffort) &&
+    typeof run.created_at === 'string' &&
+    run.created_at.length > 0 &&
+    isOptionalString(run.started_at) &&
+    isOptionalString(run.completed_at) &&
+    isOptionalString(run.prompt) &&
+    (error === undefined ||
+      error === null ||
+      (typeof error === 'object' &&
+        typeof error.message === 'string' &&
+        typeof error.ref_id === 'string'))
+  );
 }
 
 /** Fail closed when a read/result body does not belong to the requested run. */
@@ -362,36 +384,47 @@ function assertMatchingRunIds(
       { reason: 'protocol', runId: ids.runId, agentId: ids.agentId },
     );
   }
-}
-
-function assertCreatedRunIdentity(run: NimbleAgentRawRun, agentId: string): void {
-  if (
-    typeof run.id !== 'string' ||
-    run.id.length === 0 ||
-    typeof run.web_search_agent_id !== 'string' ||
-    run.web_search_agent_id.length === 0 ||
-    run.web_search_agent_id !== agentId
-  ) {
-    throw new NimbleAgentRunError(
-      'Nimble agent run creation returned invalid identifiers after the request was accepted. ' +
-        'The run may have been created server-side; reconcile recent runs before creating again.',
-      { reason: 'protocol', agentId, createOutcome: 'unknown' },
-    );
+  if (!hasValidRunFields(candidate)) {
+    throw protocolError(ids);
   }
 }
 
-function assertCreatedRunStatus(run: NimbleAgentRawRun, agentId: string): void {
-  if (!LIFECYCLE_STATUSES.has(run.status)) {
-    throw new NimbleAgentRunError(
-      'Nimble agent run creation returned an unknown status after the request was accepted. ' +
-        'The run may have been created server-side; reconcile recent runs before creating again.',
-      {
-        reason: 'protocol',
-        runId: typeof run.id === 'string' ? run.id : undefined,
-        agentId,
-        createOutcome: 'unknown',
-      },
-    );
+function createProtocolError(agentId: string, runId?: string): NimbleAgentRunError {
+  return new NimbleAgentRunError(
+    'Nimble agent run creation returned a malformed payload after the request was accepted. ' +
+      'The run may have been created server-side; reconcile recent runs before creating again.',
+    {
+      reason: 'protocol',
+      ...(runId ? { runId } : {}),
+      agentId,
+      createOutcome: 'unknown',
+    },
+  );
+}
+
+function assertCreatedRun(
+  run: NimbleAgentRawRun,
+  agentId: string,
+  apiKey: string | undefined,
+): void {
+  if (
+    !hasValidRunFields(run) ||
+    run.web_search_agent_id !== agentId ||
+    !LIFECYCLE_STATUSES.has(run.status) ||
+    !/^task_run_[A-Za-z0-9_-]+$/.test(run.id) ||
+    (apiKey !== undefined &&
+      [
+        run.id,
+        run.interaction_id,
+        run.created_at,
+        run.started_at,
+        run.completed_at,
+        run.prompt,
+        run.error?.message,
+        run.error?.ref_id,
+      ].some((value) => typeof value === 'string' && value.includes(apiKey)))
+  ) {
+    throw createProtocolError(agentId);
   }
 }
 
@@ -594,14 +627,9 @@ export function nimbleAgentStartRunTool(config: NimbleAgentStartRunConfig = {}) 
         throw toCreateError(err, { agentId, apiKey, allowErrorDetails });
       }
       if (typeof run !== 'object' || run === null) {
-        throw new NimbleAgentRunError(
-          'Nimble agent run creation returned a malformed payload after the request was accepted. ' +
-            'The run may have been created server-side; reconcile recent runs before creating again.',
-          { reason: 'protocol', agentId, createOutcome: 'unknown' },
-        );
+        throw createProtocolError(agentId);
       }
-      assertCreatedRunIdentity(run, agentId);
-      assertCreatedRunStatus(run, agentId);
+      assertCreatedRun(run, agentId, apiKey);
       return toStartOutput(run);
     },
   });
