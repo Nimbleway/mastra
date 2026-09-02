@@ -345,8 +345,25 @@ function isOptionalString(value: unknown): boolean {
   return value === undefined || value === null || typeof value === 'string';
 }
 
-function hasValidRunFields(run: Partial<NimbleAgentRawRun>): boolean {
+function hasValidRunFields(
+  run: Partial<NimbleAgentRawRun>,
+  apiKey: string | undefined,
+): boolean {
   const error = run.error;
+  const status = run.status;
+  const containsApiKey =
+    apiKey !== undefined &&
+    [
+      run.id,
+      run.web_search_agent_id,
+      run.interaction_id,
+      run.status,
+      run.effort,
+      run.created_at,
+      run.started_at,
+      run.completed_at,
+      run.prompt,
+    ].some((value) => typeof value === 'string' && value.includes(apiKey));
   return (
     typeof run.id === 'string' &&
     run.id.length > 0 &&
@@ -355,6 +372,8 @@ function hasValidRunFields(run: Partial<NimbleAgentRawRun>): boolean {
     typeof run.interaction_id === 'string' &&
     run.interaction_id.length > 0 &&
     typeof run.is_active === 'boolean' &&
+    LIFECYCLE_STATUSES.has(status as NimbleAgentRunLifecycleStatus) &&
+    run.is_active === (status === 'queued' || status === 'running') &&
     EFFORTS.has(run.effort as NimbleAgentEffort) &&
     typeof run.created_at === 'string' &&
     run.created_at.length > 0 &&
@@ -365,7 +384,8 @@ function hasValidRunFields(run: Partial<NimbleAgentRawRun>): boolean {
       error === null ||
       (typeof error === 'object' &&
         typeof error.message === 'string' &&
-        typeof error.ref_id === 'string'))
+        typeof error.ref_id === 'string')) &&
+    !containsApiKey
   );
 }
 
@@ -373,6 +393,7 @@ function hasValidRunFields(run: Partial<NimbleAgentRawRun>): boolean {
 function assertMatchingRunIds(
   run: unknown,
   ids: { runId: string; agentId: string },
+  apiKey: string | undefined,
 ): asserts run is NimbleAgentRawRun {
   if (typeof run !== 'object' || run === null) {
     throw protocolError(ids);
@@ -384,7 +405,7 @@ function assertMatchingRunIds(
       { reason: 'protocol', runId: ids.runId, agentId: ids.agentId },
     );
   }
-  if (!hasValidRunFields(candidate)) {
+  if (!hasValidRunFields(candidate, apiKey)) {
     throw protocolError(ids);
   }
 }
@@ -408,21 +429,9 @@ function assertCreatedRun(
   apiKey: string | undefined,
 ): void {
   if (
-    !hasValidRunFields(run) ||
+    !hasValidRunFields(run, apiKey) ||
     run.web_search_agent_id !== agentId ||
-    !LIFECYCLE_STATUSES.has(run.status) ||
-    !/^task_run_[A-Za-z0-9_-]+$/.test(run.id) ||
-    (apiKey !== undefined &&
-      [
-        run.id,
-        run.interaction_id,
-        run.created_at,
-        run.started_at,
-        run.completed_at,
-        run.prompt,
-        run.error?.message,
-        run.error?.ref_id,
-      ].some((value) => typeof value === 'string' && value.includes(apiKey)))
+    !/^task_run_[A-Za-z0-9_-]+$/.test(run.id)
   ) {
     throw createProtocolError(agentId);
   }
@@ -673,7 +682,7 @@ export function nimbleAgentRunStatusTool(config: NimbleAgentToolConfig = {}) {
           allowErrorDetails,
         });
       }
-      assertMatchingRunIds(run, { runId: input.runId, agentId });
+      assertMatchingRunIds(run, { runId: input.runId, agentId }, apiKey);
       assertKnownStatus(run, { runId: input.runId, agentId });
       return toStatusOutput(run, apiKey, allowErrorDetails);
     },
@@ -720,7 +729,7 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
             { agent_id: agentId },
             requestOptions(signal),
           );
-          assertMatchingRunIds(fetched, ids);
+          assertMatchingRunIds(fetched, ids, apiKey);
           return fetched;
         } catch (err) {
           throw toAgentError(err, {
@@ -773,7 +782,7 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
         if (httpStatus === 422) {
           const failed = readFailedResultBody(err);
           if (failed) {
-            assertMatchingRunIds(failed.run, ids);
+            assertMatchingRunIds(failed.run, ids, apiKey);
             if (failed.run.status !== 'failed' && failed.run.status !== 'cancelled') {
               throw protocolError(ids);
             }
@@ -807,7 +816,7 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
         ) {
           throw protocolError(ids);
         }
-        assertMatchingRunIds(failed.run, ids);
+        assertMatchingRunIds(failed.run, ids, apiKey);
         throw terminalFailure(
           failed.run,
           ids,
@@ -821,7 +830,7 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
       // or malformed body must not be stamped `completed` by toCompletedOutput.
       const resultRun = result.run;
       if (typeof resultRun?.status !== 'string') throw protocolError(ids);
-      assertMatchingRunIds(resultRun, ids);
+      assertMatchingRunIds(resultRun, ids, apiKey);
       assertKnownStatus(resultRun, ids);
       if (resultRun.status === 'queued' || resultRun.status === 'running') {
         return toPendingOutput(resultRun, resultRun.status);

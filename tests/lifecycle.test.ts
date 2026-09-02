@@ -375,6 +375,62 @@ describe('result tool', () => {
     ).rejects.toMatchObject({ reason: 'protocol', runId: RUN_ID, agentId: AGENT_ID });
   });
 
+  it.each([
+    ['queued', false],
+    ['running', false],
+    ['completed', true],
+    ['failed', true],
+    ['cancelled', true],
+  ] as const)(
+    'rejects contradictory lifecycle metadata (%s, is_active=%s)',
+    async (status, isActive) => {
+      const client = mockClient({
+        get: async () => makeRun({ status, is_active: isActive }),
+      });
+      await expect(
+        nimbleAgentRunStatusTool({ ...cfg, client }).execute!({ runId: RUN_ID }, CTX),
+      ).rejects.toMatchObject({ reason: 'protocol', runId: RUN_ID, agentId: AGENT_ID });
+    },
+  );
+
+  it('rejects and redacts an API key reflected in read metadata', async () => {
+    const client = mockClient({
+      get: async () => makeRun({ created_at: `time-${FAKE_KEY}` }),
+    });
+    const err = await nimbleAgentRunStatusTool({ agentId: AGENT_ID, apiKey: FAKE_KEY, client })
+      .execute!({ runId: RUN_ID }, CTX)
+      .then(
+        () => { throw new Error('expected failure'); },
+        (error: unknown) => error as NimbleAgentRunError,
+      );
+    expect(err).toMatchObject({ reason: 'protocol', runId: RUN_ID, agentId: AGENT_ID });
+    expect(err.message).not.toContain(FAKE_KEY);
+    expect(JSON.stringify(err)).not.toContain(FAKE_KEY);
+  });
+
+  it('rejects and redacts an API key reflected in result run metadata', async () => {
+    const client = mockClient({
+      get: async () => makeRun({ status: 'completed', is_active: false }),
+      result: async () => ({
+        ...makeTextResult(),
+        run: makeRun({
+          status: 'completed',
+          is_active: false,
+          created_at: `time-${FAKE_KEY}`,
+        }),
+      }),
+    });
+    const err = await nimbleAgentRunResultTool({ agentId: AGENT_ID, apiKey: FAKE_KEY, client })
+      .execute!({ runId: RUN_ID }, CTX)
+      .then(
+        () => { throw new Error('expected failure'); },
+        (error: unknown) => error as NimbleAgentRunError,
+      );
+    expect(err).toMatchObject({ reason: 'protocol', runId: RUN_ID, agentId: AGENT_ID });
+    expect(err.message).not.toContain(FAKE_KEY);
+    expect(JSON.stringify(err)).not.toContain(FAKE_KEY);
+  });
+
   it('does not expose an unknown read status in a protocol error', async () => {
     const leakyStatus = `status-${FAKE_KEY}`;
     const client = mockClient({
