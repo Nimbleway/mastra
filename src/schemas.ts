@@ -252,6 +252,10 @@ export interface NimbleAgentStartRunConfig extends NimbleAgentToolConfig {
    * so a model cannot unilaterally trigger `x-high`/`max` cost tiers.
    */
   effortCap?: NimbleAgentEffort;
+  /** JSON Schema sent as Agent API `output_schema` for structured output. */
+  outputSchema?: Record<string, unknown>;
+  /** Server-enforced source guidance sent as Agent API `sources`. */
+  sources?: NimbleAgentRunSources;
 }
 
 /** Bounded-wait behavior for the result tool. */
@@ -289,6 +293,30 @@ export interface NimbleAgentRunCreateBody {
   input: string;
   /** Effort level overriding the agent default for this run. */
   effort?: NimbleAgentEffort | null;
+  /** JSON schema overriding the agent's default structured output. */
+  output_schema?: Record<string, unknown> | null;
+  /** Source guidance overriding the agent default. */
+  sources?: NimbleAgentRunSources | null;
+}
+
+export interface NimbleAgentRunSourceGroup {
+  /** Human-readable source-group title. */
+  title: string;
+  /** Domains included in this source group. */
+  domains: string[];
+  /** Zero-based source-group position. */
+  order?: number;
+}
+
+export interface NimbleAgentRunSources {
+  /** Source groups the run is allowed to use. Must be non-empty when supplied. */
+  allow: NimbleAgentRunSourceGroup[];
+  /** Optional free-text source-prioritization guidance. */
+  prioritize?: string | null;
+  /** Optional free-text source-avoidance guidance. */
+  avoid?: string | null;
+  /** Source groups the run must not use. */
+  block?: NimbleAgentRunSourceGroup[];
 }
 
 /**

@@ -87,6 +87,65 @@ describe('start tool', () => {
     }
   });
 
+  it('sends developer-owned output schema and non-empty source allowlist', async () => {
+    const bodies: NimbleAgentRunCreateBody[] = [];
+    const client = mockClient({
+      create: async (_id, body) => {
+        bodies.push(body);
+        return makeRun();
+      },
+    });
+    const outputSchema = {
+      type: 'object',
+      required: ['facts', 'recommendation'],
+      properties: {
+        facts: { type: 'array', minItems: 2, maxItems: 2 },
+        recommendation: { type: 'string' },
+      },
+    };
+    const sources = {
+      allow: [
+        { title: 'Mastra repository', domains: ['github.com'], order: 0 },
+        { title: 'Mastra documentation', domains: ['mastra.ai'], order: 1 },
+      ],
+    };
+
+    await nimbleAgentStartRunTool({ agentId: AGENT_ID, client, outputSchema, sources }).execute!(
+      { task: 'research Mastra', effort: 'low' },
+      CTX,
+    );
+
+    expect(bodies).toEqual([
+      { input: 'research Mastra', effort: 'low', output_schema: outputSchema, sources },
+    ]);
+  });
+
+  it('rejects configured empty sources.allow before create', async () => {
+    const create = vi.fn(async () => makeRun());
+    const client = mockClient({ create });
+    const tool = nimbleAgentStartRunTool({ agentId: AGENT_ID, client, sources: { allow: [] } });
+
+    await expect(tool.execute!({ task: 'research Mastra' }, CTX)).rejects.toThrow(
+      'sources.allow must contain at least one named source group',
+    );
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('rejects a source allow group with no domains before create', async () => {
+    const create = vi.fn(async () => makeRun());
+    const client = mockClient({ create });
+    const tool = nimbleAgentStartRunTool({
+      agentId: AGENT_ID,
+      client,
+      sources: { allow: [{ title: 'Official docs', domains: [] }] },
+    });
+
+    await expect(tool.execute!({ task: 'research Mastra' }, CTX)).rejects.toThrow(
+      'source group with non-empty domains',
+    );
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it('rejects an unknown lifecycle status as a protocol error', async () => {
     const client = mockClient({
       create: async () => makeRun({ status: 'exploded' as never }),

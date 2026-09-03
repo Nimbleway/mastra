@@ -69,6 +69,34 @@ const tools = {
 };
 ```
 
+When a run needs structured output or a server-enforced source boundary, keep
+those controls in developer configuration rather than asking the model to
+author JSON, source URLs, or excerpts in its prompt:
+
+```ts
+const startResearch = nimbleAgentStartRunTool({
+  outputSchema: {
+    type: 'object',
+    required: ['facts', 'recommendation'],
+    properties: {
+      facts: { type: 'array', minItems: 2, maxItems: 2 },
+      recommendation: { type: 'string' },
+    },
+  },
+  sources: {
+    allow: [
+      { title: 'Official documentation', domains: ['docs.example.com'] },
+      { title: 'Official repository', domains: ['github.com'] },
+    ],
+  },
+});
+```
+
+These map directly to Agent API V2 `output_schema` and `sources`. A configured
+empty `sources.allow` is rejected before create. Trust-provided source URLs,
+claims, citations, and excerpts remain authoritative; do not duplicate them as
+model-authored output fields.
+
 ## The resumable lifecycle
 
 ```ts

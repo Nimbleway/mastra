@@ -619,9 +619,22 @@ export function nimbleAgentStartRunTool(config: NimbleAgentStartRunConfig = {}) 
       const signal = context?.abortSignal;
 
       const effort = input.effort ? capEffort(input.effort, effortCap) : config.effort;
+      if (
+        config.sources &&
+        (config.sources.allow.length === 0 ||
+          config.sources.allow.some(
+            (group) => !group.title.trim() || group.domains.length === 0 || group.domains.some((d) => !d.trim()),
+          ))
+      ) {
+        throw new NimbleConfigError(
+          'Nimble Agent API sources.allow must contain at least one named source group with non-empty domains.',
+        );
+      }
       const body: NimbleAgentRunCreateBody = {
         input: input.task,
         ...(effort ? { effort } : {}),
+        ...(config.outputSchema ? { output_schema: config.outputSchema } : {}),
+        ...(config.sources ? { sources: config.sources } : {}),
       };
 
       let run: NimbleAgentRawRun;

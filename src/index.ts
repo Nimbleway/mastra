@@ -50,6 +50,8 @@ export type {
   NimbleAgentWaitOptions,
   NimbleAgentRunsClient,
   NimbleAgentRunCreateBody,
+  NimbleAgentRunSources,
+  NimbleAgentRunSourceGroup,
   NimbleAgentRequestOptions,
   NimbleAgentRawRun,
   NimbleAgentRawResult,
