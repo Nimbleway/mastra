@@ -99,7 +99,11 @@ describe('start tool', () => {
       type: 'object',
       required: ['facts', 'recommendation'],
       properties: {
-        facts: { type: 'array', minItems: 2, maxItems: 2 },
+        facts: {
+          type: 'array',
+          description: 'Exactly two facts; validate exact cardinality after retrieval.',
+          items: { type: 'object' },
+        },
         recommendation: { type: 'string' },
       },
     };
