@@ -773,6 +773,17 @@ function toPendingOutput(
   };
 }
 
+function toCompletedNotReadyOutput(run: NimbleAgentRawRun): NimbleAgentRunPendingOutput {
+  return {
+    ready: false,
+    ...baseFields(run),
+    status: 'completed',
+    isActive: false,
+    ...(run.started_at ? { startedAt: run.started_at } : {}),
+    ...(run.completed_at ? { completedAt: run.completed_at } : {}),
+  };
+}
+
 function protocolError(ids: { runId: string; agentId: string }, runStatus?: string) {
   return new NimbleAgentRunError(
     `Nimble agent run ${ids.runId} returned a malformed result payload.`,
@@ -1073,7 +1084,6 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
             runId: ids.runId,
             agentId: ids.agentId,
             status: 'unknown',
-            isActive: true,
           };
         }
         throw err;
@@ -1128,6 +1138,9 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
           requestOptions(wait ? initialSignal : signal),
         );
       } catch (err) {
+        if (wait && initialDeadlineSignal?.aborted && !signal?.aborted) {
+          return toCompletedNotReadyOutput(run);
+        }
         const httpStatus = readStatus(err);
         // 409: the result endpoint still considers the run active (eventual
         // consistency with the status we just read) — report not-ready.

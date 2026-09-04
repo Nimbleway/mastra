@@ -774,19 +774,18 @@ describe('result tool', () => {
         }),
     });
     const started = performance.now();
-    await expect(
-      nimbleAgentRunResultTool({
-        ...cfg,
-        client,
-        wait: { timeoutMs: 150, pollIntervalMs: 100 },
-      }).execute!({ runId: RUN_ID }, CTX),
-    ).resolves.toMatchObject({
+    const out = await nimbleAgentRunResultTool({
+      ...cfg,
+      client,
+      wait: { timeoutMs: 150, pollIntervalMs: 100 },
+    }).execute!({ runId: RUN_ID }, CTX);
+    expect(out).toMatchObject({
       ready: false,
       runId: RUN_ID,
       agentId: AGENT_ID,
       status: 'unknown',
-      isActive: true,
     });
+    expect(out).not.toHaveProperty('isActive');
     expect(performance.now() - started).toBeLessThan(500);
   });
 
@@ -807,7 +806,37 @@ describe('result tool', () => {
         client,
         wait: { timeoutMs: 150, pollIntervalMs: 100 },
       }).execute!({ runId: RUN_ID }, CTX),
-    ).rejects.toBeInstanceOf(NimbleAgentRunError);
+    ).resolves.toMatchObject({
+      ready: false,
+      runId: RUN_ID,
+      agentId: AGENT_ID,
+      status: 'completed',
+      isActive: false,
+    });
     expect(performance.now() - started).toBeLessThan(500);
   });
+
+  it.each(['initial status', 'final result'] as const)(
+    'preserves caller cancellation as an error during %s',
+    async (phase) => {
+      const controller = new AbortController();
+      const hanging = async (_runId: string, _query: unknown, options?: { signal?: AbortSignal }) =>
+        await new Promise<never>((_, reject) => {
+          options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true });
+        });
+      const client = mockClient({
+        get: phase === 'initial status'
+          ? hanging as never
+          : async () => makeRun({ status: 'completed', is_active: false }),
+        result: phase === 'final result' ? hanging as never : undefined,
+      });
+      const pending = nimbleAgentRunResultTool({
+        ...cfg,
+        client,
+        wait: { timeoutMs: 5_000, pollIntervalMs: 100 },
+      }).execute!({ runId: RUN_ID }, { abortSignal: controller.signal } as never);
+      setTimeout(() => controller.abort(new Error('caller cancelled')), 10);
+      await expect(pending).rejects.toBeInstanceOf(NimbleAgentRunError);
+    },
+  );
 });

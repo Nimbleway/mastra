@@ -173,16 +173,35 @@ export const nimbleAgentRunStatusOutputSchema = z.object({
 export type NimbleAgentRunStatusOutput = z.infer<typeof nimbleAgentRunStatusOutputSchema>;
 
 /** Result-tool output while the run is still working: try again later. */
-export const nimbleAgentRunPendingOutputSchema = z.object({
-  ready: z.literal(false),
-  runId: z.string(),
-  agentId: z.string(),
-  status: z.enum(['queued', 'running', 'unknown']),
-  isActive: z.literal(true),
-  effort: effortSchema.optional(),
-  createdAt: z.string().optional(),
-  startedAt: z.string().optional(),
-});
+export const nimbleAgentRunPendingOutputSchema = z.union([
+  z.object({
+    ready: z.literal(false),
+    runId: z.string(),
+    agentId: z.string(),
+    status: z.enum(['queued', 'running']),
+    isActive: z.literal(true),
+    effort: effortSchema,
+    createdAt: z.string(),
+    startedAt: z.string().optional(),
+  }),
+  z.object({
+    ready: z.literal(false),
+    runId: z.string(),
+    agentId: z.string(),
+    status: z.literal('completed'),
+    isActive: z.literal(false),
+    effort: effortSchema,
+    createdAt: z.string(),
+    startedAt: z.string().optional(),
+    completedAt: z.string().optional(),
+  }),
+  z.object({
+    ready: z.literal(false),
+    runId: z.string(),
+    agentId: z.string(),
+    status: z.literal('unknown'),
+  }),
+]);
 
 export type NimbleAgentRunPendingOutput = z.infer<typeof nimbleAgentRunPendingOutputSchema>;
 
