@@ -141,64 +141,6 @@ function isNimbleRunError(value: unknown): value is NimbleAgentRunError {
   }
 }
 
-/** True when the key appears anywhere in the error's message/stack/body chain. */
-function keyInErrorChain(
-  err: unknown,
-  apiKey: string,
-  depth = 0,
-  seen = new WeakSet<object>(),
-): boolean {
-  if (err === null || err === undefined) return false;
-  if (typeof err !== 'object' && typeof err !== 'function') {
-    try {
-      return String(err).includes(apiKey);
-    } catch {
-      return true;
-    }
-  }
-  // The remainder of an over-deep object chain cannot be proven clean. Fail
-  // closed instead of retaining a potentially credential-bearing raw cause.
-  if (depth > 4) return true;
-  if (seen.has(err)) return true;
-  seen.add(err);
-  const candidate = err as object;
-  if (isErrorObject(err)) {
-    try {
-      for (const value of [err.name, err.message, err.stack]) {
-        if (value !== undefined && typeof value !== 'string') return true;
-        if (typeof value === 'string' && value.includes(apiKey)) return true;
-      }
-    } catch {
-      return true;
-    }
-  } else {
-    try {
-      const prototype = Object.getPrototypeOf(err);
-      if (!Array.isArray(err) && prototype !== Object.prototype && prototype !== null) {
-        return true;
-      }
-    } catch {
-      return true;
-    }
-  }
-  try {
-    // Inspect every own property without invoking custom toJSON methods or
-    // getters. Node's console formatter includes enumerable symbol keys.
-    for (const key of Reflect.ownKeys(candidate)) {
-      if (typeof key === 'symbol' && String(key).includes(apiKey)) return true;
-      if (typeof key === 'string' && key.includes(apiKey)) return true;
-      const descriptor = Object.getOwnPropertyDescriptor(candidate, key);
-      if (!descriptor) return true;
-      if ('get' in descriptor || 'set' in descriptor) return true;
-      if (key === 'name' || key === 'message' || key === 'stack') continue;
-      if (keyInErrorChain(descriptor.value, apiKey, depth + 1, seen)) return true;
-    }
-  } catch {
-    return true;
-  }
-  return false;
-}
-
 /**
  * `Error.cause` is printed by `console.error`/`util.inspect` in every
  * downstream consumer, so a raw cause whose message, stack, or response body
@@ -209,9 +151,6 @@ function keyInErrorChain(
  */
 function sanitizeCause(err: unknown, apiKey: string | undefined): unknown {
   if (!apiKey) return undefined;
-  // Walk the complete chain before extracting display fields. This both
-  // detects hostile accessors/internal slots and keeps fail-closed behavior.
-  keyInErrorChain(err, apiKey);
   const original = isErrorObject(err) ? err : undefined;
   let message = 'Untrusted error details withheld';
   let name = 'Error';
@@ -238,6 +177,15 @@ function sanitizeCause(err: unknown, apiKey: string | undefined): unknown {
 function safeErrorMetadata(value: unknown, apiKey: string | undefined): string | undefined {
   if (typeof value !== 'string') return undefined;
   return apiKey && value.includes(apiKey) ? undefined : value;
+}
+
+function assertSafeRequestedRunId(runId: string, agentId: string, apiKey: string | undefined): void {
+  if (apiKey && runId.includes(apiKey)) {
+    throw new NimbleAgentRunError('Nimble agent run identifier contains protected credential material.', {
+      reason: 'protocol',
+      agentId,
+    });
+  }
 }
 
 /** Read runtime error properties without trusting user-defined accessors. */
@@ -526,7 +474,10 @@ function toCreateError(
   const suppliedOutcome = nimbleError
     ? safeCreateOutcome(safeErrorProperty(err, 'createOutcome'))
     : undefined;
-  const outcome = suppliedOutcome ?? classifyCreateOutcome(err);
+  const classifiedOutcome = classifyCreateOutcome(err);
+  const outcome = classifiedOutcome === 'unknown'
+    ? 'unknown'
+    : suppliedOutcome ?? classifiedOutcome;
   const message = context.allowErrorDetails
     ? safeErrorMessage(err, context.apiKey)
     : 'request failed; details withheld because the injected client credential was not provided for redaction';
@@ -1013,6 +964,7 @@ export function nimbleAgentRunStatusTool(config: NimbleAgentToolConfig = {}) {
         'nimbleAgentRunStatusTool',
       );
       const signal = context?.abortSignal;
+      assertSafeRequestedRunId(input.runId, agentId, apiKey);
 
       let run: NimbleAgentRawRun;
       try {
@@ -1068,6 +1020,7 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
         'nimbleAgentRunResultTool',
       );
       const signal = context?.abortSignal;
+      assertSafeRequestedRunId(input.runId, agentId, apiKey);
       const ids = { runId: input.runId, agentId };
 
       const getRun = async (requestSignal = signal): Promise<NimbleAgentRawRun> => {

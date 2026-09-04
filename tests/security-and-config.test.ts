@@ -36,6 +36,47 @@ describe('the API key stays server-only', () => {
     expect(serialized).not.toContain('api_key');
   });
 
+  it.each(['status', 'result'] as const)(
+    'rejects a %s run id containing the configured key without exposing or sending it',
+    async (operation) => {
+      const get = vi.fn();
+      const config = { agentId: AGENT_ID, apiKey: FAKE_KEY, client: mockClient({ get }) };
+      const tool = operation === 'status'
+        ? nimbleAgentRunStatusTool(config)
+        : nimbleAgentRunResultTool(config);
+      const err = await tool.execute!({ runId: `task_run_${FAKE_KEY}` }, CTX)
+        .catch((caught: unknown) => caught) as NimbleAgentRunError;
+      expect(err).toBeInstanceOf(NimbleAgentRunError);
+      expect(err.runId).toBeUndefined();
+      expect(String(err)).not.toContain(FAKE_KEY);
+      expect(JSON.stringify(err)).not.toContain(FAKE_KEY);
+      expect(inspect(err, { depth: 10 })).not.toContain(FAKE_KEY);
+      expect(get).not.toHaveBeenCalled();
+    },
+  );
+
+  it('sanitizes a wide error in bounded work without traversing unrelated fields', async () => {
+    let descriptorReads = 0;
+    const keys = Array.from({ length: 10_000 }, (_, index) => `field_${index}`);
+    const wide = new Proxy({}, {
+      ownKeys: () => keys,
+      getOwnPropertyDescriptor: () => {
+        descriptorReads += 1;
+        return { value: 'safe', enumerable: true, configurable: true, writable: true };
+      },
+    });
+    const hostile = new Error('request failed') as Error & { context: unknown };
+    hostile.context = wide;
+    const err = await nimbleAgentStartRunTool({
+      agentId: AGENT_ID,
+      apiKey: FAKE_KEY,
+      client: mockClient({ create: async () => { throw hostile; } }),
+    }).execute!({ task: 't' }, CTX).catch((caught: unknown) => caught);
+    expect(err).toBeInstanceOf(NimbleAgentRunError);
+    expect(descriptorReads).toBe(0);
+    expect(inspect(err, { depth: 10 })).not.toContain(FAKE_KEY);
+  });
+
   it('never appears in tool outputs', async () => {
     const client = mockClient({
       get: async () => makeRun({ status: 'completed', is_active: false }),

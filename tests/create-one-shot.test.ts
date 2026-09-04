@@ -232,6 +232,26 @@ describe('ambiguous-outcome guidance', () => {
     });
   }
 
+  it.each([408, 409, 500, 503])(
+    'HTTP %s overrides contradictory injected not-created metadata as unknown',
+    async (status) => {
+      const injected = new NimbleAgentRunError('contradictory create failure', {
+        reason: 'request',
+        status,
+        createOutcome: 'not-created',
+      });
+      const tool = nimbleAgentStartRunTool({
+        agentId: AGENT_ID,
+        apiKey: FAKE_KEY,
+        client: mockClient({ create: async () => { throw injected; } }),
+      });
+      const err = await tool.execute!({ task: 't' }, CTX)
+        .catch((caught: unknown) => caught) as NimbleAgentRunError;
+      expect(err).toMatchObject({ status, createOutcome: 'unknown' });
+      expect(err.message).toContain('Do not automatically start another run');
+    },
+  );
+
   for (const status of [429, 422, 400, 401]) {
     it(`HTTP ${status}: outcome not-created — definite rejection`, async () => {
       const err = await captureError(status);
