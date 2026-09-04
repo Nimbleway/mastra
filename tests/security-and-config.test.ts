@@ -233,6 +233,7 @@ describe('the API key stays server-only', () => {
       error?: unknown;
     };
     leaky.error = { detail: `body echoing ${FAKE_KEY}` };
+    leaky.name = `ApiError-${FAKE_KEY}`;
 
     const err = await nimbleAgentStartRunTool({
       agentId: AGENT_ID,
@@ -254,6 +255,7 @@ describe('the API key stays server-only', () => {
     const cause = err.cause as Error & { error?: unknown };
     expect(cause).toBeDefined();
     expect(cause.message).not.toContain(FAKE_KEY);
+    expect(cause.name).not.toContain(FAKE_KEY);
     expect(String(cause.stack ?? '')).not.toContain(FAKE_KEY);
     expect(JSON.stringify(cause)).not.toContain(FAKE_KEY);
   });
@@ -437,6 +439,22 @@ describe('the API key stays server-only', () => {
     expect(err.agentId).toBe(AGENT_ID);
     expect(err.runStatus).toBeUndefined();
     expect(inspect(err, { depth: 10 })).not.toContain(FAKE_KEY);
+  });
+
+  it('drops a recovered create run id reported for another agent', async () => {
+    const { NimbleAgentRunError } = await import('../src/errors');
+    const mismatched = new NimbleAgentRunError('create failed', {
+      reason: 'request', runId: RUN_ID, agentId: 'wsa_other', createOutcome: 'unknown',
+    });
+    const err = await nimbleAgentStartRunTool({
+      agentId: AGENT_ID, apiKey: FAKE_KEY,
+      client: mockClient({ create: async () => { throw mismatched; } }),
+    }).execute!({ task: 't' }, CTX).then(
+      () => { throw new Error('expected failure'); },
+      (e: unknown) => e as NimbleAgentRunError,
+    );
+    expect(err).toMatchObject({ agentId: AGENT_ID, createOutcome: 'unknown' });
+    expect(err.runId).toBeUndefined();
   });
 
   it('fails closed on runtime-invalid injected error metadata', async () => {

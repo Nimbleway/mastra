@@ -148,7 +148,7 @@ function sanitizeCause(err: unknown, apiKey: string | undefined): unknown {
   if (!apiKey || !keyInErrorChain(err, apiKey)) return err;
   const original = err instanceof Error ? err : undefined;
   const copy = new Error(scrub(original?.message ?? String(err), apiKey));
-  copy.name = original?.name ?? 'Error';
+  copy.name = scrub(original?.name ?? 'Error', apiKey);
   if (original?.stack) copy.stack = scrub(original.stack, apiKey);
   return copy;
 }
@@ -205,6 +205,19 @@ function safeErrorReason(value: unknown): NimbleAgentRunErrorReason {
 
 function safeCreateOutcome(value: unknown): NimbleAgentCreateOutcome | undefined {
   return value === 'unknown' || value === 'not-created' ? value : undefined;
+}
+
+function safeCreateErrorRunId(
+  err: NimbleAgentRunError,
+  agentId: string,
+  apiKey: string | undefined,
+): string | undefined {
+  const runId = safeErrorMetadata(err.runId, apiKey);
+  const returnedAgentId = safeErrorMetadata(err.agentId, apiKey);
+  return runId && /^task_run_[A-Za-z0-9_-]+$/.test(runId) &&
+    (returnedAgentId === undefined || returnedAgentId === agentId)
+    ? runId
+    : undefined;
 }
 
 function toAgentError(
@@ -292,7 +305,7 @@ function toCreateError(
     reason: err instanceof NimbleAgentRunError ? safeErrorReason(err.reason) : 'request',
     runId:
       context.allowErrorDetails && err instanceof NimbleAgentRunError
-        ? safeErrorMetadata(err.runId, context.apiKey)
+        ? safeCreateErrorRunId(err, context.agentId, context.apiKey)
         : undefined,
     agentId: context.agentId,
     runStatus:
@@ -823,6 +836,7 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
           const remaining = wait.timeoutMs - elapsed;
           if (remaining <= 0) break;
           await sleep(Math.min(wait.pollIntervalMs, remaining), signal);
+          if (performance.now() - startedWaiting >= wait.timeoutMs) break;
           run = await getRun();
           assertKnownStatus(run, ids);
         }

@@ -541,12 +541,14 @@ describe('result tool', () => {
   });
 
   it('a wait that times out returns { ready: false } — a live run is not an error', async () => {
-    const client = mockClient({ get: async () => makeRun({ status: 'running' }) });
+    let calls = 0;
+    const client = mockClient({ get: async () => { calls += 1; return makeRun({ status: 'running' }); } });
     const out = await nimbleAgentRunResultTool({
       ...cfg,
       client,
       wait: { timeoutMs: 150, pollIntervalMs: 1 },
     }).execute!({ runId: RUN_ID }, CTX);
     expect(out).toMatchObject({ ready: false, status: 'running' });
+    expect(calls).toBe(2);
   });
 });
