@@ -434,11 +434,17 @@ function createProtocolError(agentId: string, runId?: string): NimbleAgentRunErr
   );
 }
 
-function safeCreatedRunId(run: unknown, apiKey: string | undefined): string | undefined {
+function safeCreatedRunId(
+  run: unknown,
+  agentId: string,
+  apiKey: string | undefined,
+): string | undefined {
   if (typeof run !== 'object' || run === null) return undefined;
-  const id = (run as { id?: unknown }).id;
+  const candidate = run as { id?: unknown; web_search_agent_id?: unknown };
+  const id = candidate.id;
   return typeof id === 'string' &&
     /^task_run_[A-Za-z0-9_-]+$/.test(id) &&
+    candidate.web_search_agent_id === agentId &&
     !containsCredential(id, apiKey)
     ? id
     : undefined;
@@ -457,7 +463,7 @@ function assertCreatedRun(
     // The POST was accepted. Preserve a separately validated run handle even
     // when another response field is malformed, so callers can reconcile or
     // resume instead of risking a second billed create.
-    throw createProtocolError(agentId, safeCreatedRunId(run, apiKey));
+    throw createProtocolError(agentId, safeCreatedRunId(run, agentId, apiKey));
   }
 }
 

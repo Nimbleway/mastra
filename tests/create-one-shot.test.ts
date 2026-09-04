@@ -157,6 +157,21 @@ describe('run creation is one-shot', () => {
       createOutcome: 'unknown',
     });
   });
+
+  it('withholds an accepted run id when the response belongs to another agent', async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(200, makeRun({ web_search_agent_id: 'wsa_other' })),
+    );
+    const err = await startToolWithFetch(fetchMock as unknown as typeof fetch)
+      .execute!({ task: 'research x' }, CTX)
+      .then(
+        () => { throw new Error('expected failure'); },
+        (error: unknown) => error as NimbleAgentRunError,
+      );
+
+    expect(err).toMatchObject({ reason: 'protocol', agentId: AGENT_ID });
+    expect(err.runId).toBeUndefined();
+  });
 });
 
 describe('ambiguous-outcome guidance', () => {
