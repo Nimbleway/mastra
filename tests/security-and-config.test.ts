@@ -404,6 +404,7 @@ describe('the API key stays server-only', () => {
 
     expect(err).not.toBe(leaky);
     expect(err).toMatchObject({ reason: 'request', runId: RUN_ID, agentId: AGENT_ID, status: 401 });
+    expect(err.message).toContain(RUN_ID);
     expect(inspect(err, { depth: 5 })).not.toContain(FAKE_KEY);
   });
 
@@ -600,6 +601,7 @@ describe('the API key stays server-only', () => {
       status: 503,
       createOutcome: 'unknown',
     });
+    expect(err.message).toContain(RUN_ID);
     expect(inspect(err, { depth: 5 })).not.toContain(FAKE_KEY);
   });
 });

@@ -277,9 +277,10 @@ function toAgentError(
   if (err instanceof NimbleAgentRunError) {
     const runRef = context.runId ? ` (run ${context.runId})` : '';
     const status = safeErrorProperty(err, 'status');
-    const message = context.allowErrorDetails
+    const detail = context.allowErrorDetails
       ? safeErrorMessage(err, context.apiKey)
-      : `Nimble agent ${context.verb} failed${runRef}: details withheld because the injected client credential was not provided for redaction`;
+      : 'details withheld because the injected client credential was not provided for redaction';
+    const message = `Nimble agent ${context.verb} failed${runRef}: ${detail}`;
     return new NimbleAgentRunError(message, {
       reason: safeErrorReason(safeErrorProperty(err, 'reason')),
       // Requested identifiers are trusted and authoritative on read paths.
@@ -351,14 +352,16 @@ function toCreateError(
   const status = err instanceof NimbleAgentRunError
     ? safeErrorProperty(err, 'status')
     : undefined;
-  return new NimbleAgentRunError(`Nimble agent run creation failed: ${message} ${guidance}`, {
+  const recoveredRunId =
+    context.allowErrorDetails && err instanceof NimbleAgentRunError
+      ? safeCreateErrorRunId(err, context.agentId, context.apiKey)
+      : undefined;
+  const runRef = recoveredRunId ? ` (run ${recoveredRunId})` : '';
+  return new NimbleAgentRunError(`Nimble agent run creation failed${runRef}: ${message} ${guidance}`, {
     reason: err instanceof NimbleAgentRunError
       ? safeErrorReason(safeErrorProperty(err, 'reason'))
       : 'request',
-    runId:
-      context.allowErrorDetails && err instanceof NimbleAgentRunError
-        ? safeCreateErrorRunId(err, context.agentId, context.apiKey)
-        : undefined,
+    runId: recoveredRunId,
     agentId: context.agentId,
     runStatus:
       context.allowErrorDetails && err instanceof NimbleAgentRunError
