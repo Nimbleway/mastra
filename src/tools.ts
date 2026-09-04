@@ -857,6 +857,24 @@ function abortReason(signal: AbortSignal | undefined): unknown {
   return signal?.reason ?? new Error('The operation was aborted.');
 }
 
+/** Await an operation without trusting the implementation to honor its signal. */
+function abortable<T>(operation: PromiseLike<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return Promise.resolve(operation);
+  if (signal.aborted) return Promise.reject(abortReason(signal));
+  return new Promise<T>((resolve, reject) => {
+    const settle = (callback: (value: never) => void, value: unknown) => {
+      signal.removeEventListener('abort', onAbort);
+      callback(value as never);
+    };
+    const onAbort = () => settle(reject, abortReason(signal));
+    signal.addEventListener('abort', onAbort, { once: true });
+    Promise.resolve(operation).then(
+      (value) => settle(resolve, value),
+      (error) => settle(reject, error),
+    );
+  });
+}
+
 /**
  * A finite, positive number, or the fallback. Guards against non-finite /
  * non-positive wait values (notably `NaN` from `Number(unset env)`) — which
@@ -1132,10 +1150,13 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
       // status === 'completed' — fetch the output.
       let result: NimbleAgentRawResult | NimbleAgentRawFailedResult;
       try {
-        result = await client.agents.runs.result(
-          input.runId,
-          { agent_id: agentId },
-          requestOptions(wait ? initialSignal : signal),
+        result = await abortable(
+          client.agents.runs.result(
+            input.runId,
+            { agent_id: agentId },
+            requestOptions(wait ? initialSignal : signal),
+          ),
+          wait ? initialSignal : signal,
         );
       } catch (err) {
         if (wait && initialDeadlineSignal?.aborted && !signal?.aborted) {
