@@ -169,6 +169,49 @@ describe('the API key stays server-only', () => {
     },
   );
 
+  it('snapshots a proxy-backed create response without invoking get traps', async () => {
+    let protectedReads = 0;
+    const run = new Proxy(makeRun(), {
+      get(target, property, receiver) {
+        if (property === 'id') {
+          protectedReads += 1;
+          throw new Error(`proxy exposed ${FAKE_KEY}`);
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const output = await nimbleAgentStartRunTool({
+      agentId: AGENT_ID,
+      apiKey: FAKE_KEY,
+      client: mockClient({ create: async () => run }),
+    }).execute!({ task: 't' }, CTX);
+    expect(output).toMatchObject({ runId: RUN_ID, agentId: AGENT_ID });
+    expect(protectedReads).toBe(0);
+  });
+
+  it('snapshots a proxy-backed result response without invoking get traps', async () => {
+    let protectedReads = 0;
+    const result = new Proxy(makeTextResult(), {
+      get(target, property, receiver) {
+        if (property === 'run') {
+          protectedReads += 1;
+          throw new Error(`proxy exposed ${FAKE_KEY}`);
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const output = await nimbleAgentRunResultTool({
+      agentId: AGENT_ID,
+      apiKey: FAKE_KEY,
+      client: mockClient({
+        get: async () => makeRun({ status: 'completed', is_active: false }),
+        result: async () => result,
+      }),
+    }).execute!({ runId: RUN_ID }, CTX);
+    expect(output).toMatchObject({ ready: true, runId: RUN_ID });
+    expect(protectedReads).toBe(0);
+  });
+
   it('accepts deeply nested structured output when it contains no credential', async () => {
     let content: Record<string, unknown> = { value: 'safe' };
     for (let depth = 0; depth < 50; depth += 1) content = { nested: content };
@@ -512,6 +555,9 @@ describe('the API key stays server-only', () => {
       );
     expect(err.cause).not.toBe(clean);
     expect(err.cause).toMatchObject({ message: 'plain network hiccup' });
+    clean.message = FAKE_KEY;
+    clean.name = FAKE_KEY;
+    expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
   });
 
   it('withholds error details and raw causes for an injected client with an unknown key', async () => {

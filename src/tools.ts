@@ -77,9 +77,11 @@ function readStatus(err: unknown): number | undefined {
 
 function asFailedResult(value: unknown): NimbleAgentRawFailedResult | undefined {
   try {
-    if (typeof value !== 'object' || value === null) return undefined;
-    if (hasUnsafeAccessors(value)) return undefined;
-    const candidate = value as Partial<NimbleAgentRawFailedResult>;
+    const snapshot = snapshotPlainData(value);
+    if (!snapshot.ok || typeof snapshot.value !== 'object' || snapshot.value === null) {
+      return undefined;
+    }
+    const candidate = snapshot.value as Partial<NimbleAgentRawFailedResult>;
     if (
       typeof candidate.run?.status === 'string' &&
       typeof candidate.error?.message === 'string' &&
@@ -194,11 +196,15 @@ function keyInErrorChain(
  * `Error.cause` is printed by `console.error`/`util.inspect` in every
  * downstream consumer, so a raw cause whose message, stack, or response body
  * echoes the key would leak it even though the outer message is scrubbed.
- * Proven-inert causes pass through untouched; accessor-backed or dirty ones
- * are replaced by a flat, scrubbed copy.
+ * Causes are always replaced by a flat, scrubbed snapshot. Retaining even a
+ * currently clean client-owned Error would let the client mutate it after
+ * validation and expose the credential through the wrapper later.
  */
 function sanitizeCause(err: unknown, apiKey: string | undefined): unknown {
-  if (!apiKey || !keyInErrorChain(err, apiKey)) return err;
+  if (!apiKey) return undefined;
+  // Walk the complete chain before extracting display fields. This both
+  // detects hostile accessors/internal slots and keeps fail-closed behavior.
+  keyInErrorChain(err, apiKey);
   const original = isErrorObject(err) ? err : undefined;
   let message = 'Untrusted error details withheld';
   let name = 'Error';
@@ -312,6 +318,57 @@ function hasUnsafeAccessors(value: unknown, seen = new WeakSet<object>()): boole
     return true;
   }
   return false;
+}
+
+type PlainDataSnapshot = { ok: true; value: unknown } | { ok: false };
+
+/**
+ * Copy an SDK response exclusively from own data descriptors. This prevents a
+ * Proxy `get` trap from running after validation while retaining ordinary JSON
+ * objects, arrays, and shared references.
+ */
+function snapshotPlainData(value: unknown): PlainDataSnapshot {
+  const copies = new WeakMap<object, object>();
+  const active = new WeakSet<object>();
+
+  const copy = (current: unknown): PlainDataSnapshot => {
+    if (
+      current === null ||
+      typeof current === 'string' ||
+      typeof current === 'boolean' ||
+      (typeof current === 'number' && Number.isFinite(current))
+    ) return { ok: true, value: current };
+    if (typeof current !== 'object') return { ok: false };
+
+    const source = current as object;
+    if (active.has(source)) return { ok: false };
+    const existing = copies.get(source);
+    if (existing) return { ok: true, value: existing };
+
+    try {
+      const isArray = Array.isArray(source);
+      const prototype = Object.getPrototypeOf(source);
+      if (!isArray && prototype !== Object.prototype && prototype !== null) return { ok: false };
+      const target: unknown[] | Record<string, unknown> = isArray ? [] : {};
+      copies.set(source, target);
+      active.add(source);
+      for (const key of Reflect.ownKeys(source)) {
+        if (isArray && key === 'length') continue;
+        if (typeof key !== 'string') return { ok: false };
+        const descriptor = Object.getOwnPropertyDescriptor(source, key);
+        if (!descriptor || !('value' in descriptor) || !descriptor.enumerable) return { ok: false };
+        const child = copy(descriptor.value);
+        if (!child.ok) return child;
+        (target as Record<string, unknown>)[key] = child.value;
+      }
+      active.delete(source);
+      return { ok: true, value: target };
+    } catch {
+      return { ok: false };
+    }
+  };
+
+  return copy(value);
 }
 
 function safeErrorReason(value: unknown): NimbleAgentRunErrorReason {
@@ -602,6 +659,17 @@ function assertMatchingRunIds(
   }
 }
 
+function snapshotRun(
+  run: unknown,
+  ids: { runId: string; agentId: string },
+  apiKey: string | undefined,
+): NimbleAgentRawRun {
+  const snapshot = snapshotPlainData(run);
+  if (!snapshot.ok) throw protocolError(ids);
+  assertMatchingRunIds(snapshot.value, ids, apiKey);
+  return snapshot.value;
+}
+
 function createProtocolError(agentId: string, runId?: string): NimbleAgentRunError {
   return new NimbleAgentRunError(
     'Nimble agent run creation returned a malformed payload after the request was accepted. ' +
@@ -633,24 +701,27 @@ function safeCreatedRunId(
     : undefined;
 }
 
-function assertCreatedRun(
-  run: NimbleAgentRawRun,
+function snapshotCreatedRun(
+  run: unknown,
   agentId: string,
   apiKey: string | undefined,
-): void {
-  if (hasUnsafeAccessors(run)) {
+): NimbleAgentRawRun {
+  const snapshot = snapshotPlainData(run);
+  if (!snapshot.ok || typeof snapshot.value !== 'object' || snapshot.value === null) {
     throw createProtocolError(agentId);
   }
+  const candidate = snapshot.value as NimbleAgentRawRun;
   if (
-    !hasValidRunFields(run, apiKey) ||
-    run.web_search_agent_id !== agentId ||
-    !/^task_run_[A-Za-z0-9_-]+$/.test(run.id)
+    !hasValidRunFields(candidate, apiKey) ||
+    candidate.web_search_agent_id !== agentId ||
+    !/^task_run_[A-Za-z0-9_-]+$/.test(candidate.id)
   ) {
     // The POST was accepted. Preserve a separately validated run handle even
     // when another response field is malformed, so callers can reconcile or
     // resume instead of risking a second billed create.
-    throw createProtocolError(agentId, safeCreatedRunId(run, agentId, apiKey));
+    throw createProtocolError(agentId, safeCreatedRunId(candidate, agentId, apiKey));
   }
+  return candidate;
 }
 
 function baseFields(run: NimbleAgentRawRun) {
@@ -864,11 +935,7 @@ export function nimbleAgentStartRunTool(config: NimbleAgentStartRunConfig = {}) 
       } catch (err) {
         throw toCreateError(err, { agentId, apiKey, allowErrorDetails });
       }
-      if (typeof run !== 'object' || run === null) {
-        throw createProtocolError(agentId);
-      }
-      assertCreatedRun(run, agentId, apiKey);
-      return toStartOutput(run);
+      return toStartOutput(snapshotCreatedRun(run, agentId, apiKey));
     },
   });
 }
@@ -911,7 +978,7 @@ export function nimbleAgentRunStatusTool(config: NimbleAgentToolConfig = {}) {
           allowErrorDetails,
         });
       }
-      assertMatchingRunIds(run, { runId: input.runId, agentId }, apiKey);
+      run = snapshotRun(run, { runId: input.runId, agentId }, apiKey);
       assertKnownStatus(run, { runId: input.runId, agentId });
       return toStatusOutput(run, apiKey, allowErrorDetails);
     },
@@ -958,8 +1025,7 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
             { agent_id: agentId },
             requestOptions(requestSignal),
           );
-          assertMatchingRunIds(fetched, ids, apiKey);
-          return fetched;
+          return snapshotRun(fetched, ids, apiKey);
         } catch (err) {
           throw toAgentError(err, {
             verb: 'status check',
@@ -1062,9 +1128,11 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
         });
       }
 
-      if (typeof result !== 'object' || result === null) {
+      const resultSnapshot = snapshotPlainData(result);
+      if (!resultSnapshot.ok || typeof resultSnapshot.value !== 'object' || resultSnapshot.value === null) {
         throw protocolError(ids);
       }
+      result = resultSnapshot.value as NimbleAgentRawResult | NimbleAgentRawFailedResult;
       // A successful result is model-visible. Reject the complete envelope if
       // a backend/proxy reflects the configured server-only credential in the
       // answer, structured JSON, trust metadata, or any future field.
