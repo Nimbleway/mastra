@@ -789,6 +789,43 @@ describe('result tool', () => {
     expect(performance.now() - started).toBeLessThan(500);
   });
 
+  it('bounds a noncooperative initial status request', async () => {
+    const client = mockClient({
+      get: async () => await new Promise<never>(() => {}),
+    });
+    await expect(
+      nimbleAgentRunResultTool({
+        ...cfg,
+        client,
+        wait: { timeoutMs: 20, pollIntervalMs: 10 },
+      }).execute!({ runId: RUN_ID }, CTX),
+    ).resolves.toEqual({
+      ready: false,
+      runId: RUN_ID,
+      agentId: AGENT_ID,
+      status: 'unknown',
+    });
+  });
+
+  it('bounds a noncooperative later status poll', async () => {
+    let calls = 0;
+    const client = mockClient({
+      get: async () => {
+        calls += 1;
+        if (calls === 1) return makeRun({ status: 'running', is_active: true });
+        return await new Promise<never>(() => {});
+      },
+    });
+    await expect(
+      nimbleAgentRunResultTool({
+        ...cfg,
+        client,
+        wait: { timeoutMs: 150, pollIntervalMs: 10 },
+      }).execute!({ runId: RUN_ID }, CTX),
+    ).resolves.toMatchObject({ ready: false, status: 'running', isActive: true });
+    expect(calls).toBe(2);
+  });
+
   it('bounds the final result request by the original wait timeout', async () => {
     const client = mockClient({
       get: async () => makeRun({ status: 'completed', is_active: false }),

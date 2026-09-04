@@ -1054,10 +1054,13 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
 
       const getRun = async (requestSignal = signal): Promise<NimbleAgentRawRun> => {
         try {
-          const fetched = await client.agents.runs.get(
-            input.runId,
-            { agent_id: agentId },
-            requestOptions(requestSignal),
+          const fetched = await abortable(
+            client.agents.runs.get(
+              input.runId,
+              { agent_id: agentId },
+              requestOptions(requestSignal),
+            ),
+            requestSignal,
           );
           return snapshotRun(fetched, ids, apiKey);
         } catch (err) {
