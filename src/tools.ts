@@ -164,9 +164,10 @@ function keyInErrorChain(
   const candidate = err as object;
   if (isErrorObject(err)) {
     try {
-      if (typeof err.name === 'string' && err.name.includes(apiKey)) return true;
-      if (typeof err.message === 'string' && err.message.includes(apiKey)) return true;
-      if (typeof err.stack === 'string' && err.stack.includes(apiKey)) return true;
+      for (const value of [err.name, err.message, err.stack]) {
+        if (value !== undefined && typeof value !== 'string') return true;
+        if (typeof value === 'string' && value.includes(apiKey)) return true;
+      }
     } catch {
       return true;
     }
@@ -215,9 +216,18 @@ function sanitizeCause(err: unknown, apiKey: string | undefined): unknown {
   let message = 'Untrusted error details withheld';
   let name = 'Error';
   let stack: string | undefined;
-  try { message = scrub(original?.message ?? String(err), apiKey); } catch { /* keep safe default */ }
-  try { name = scrub(original?.name ?? 'Error', apiKey); } catch { /* keep safe default */ }
-  try { if (original?.stack) stack = scrub(original.stack, apiKey); } catch { /* omit unsafe stack */ }
+  try {
+    const value = original?.message;
+    message = scrub(typeof value === 'string' ? value : String(err), apiKey);
+  } catch { /* keep safe default */ }
+  try {
+    const value = original?.name;
+    name = scrub(typeof value === 'string' ? value : 'Error', apiKey);
+  } catch { /* keep safe default */ }
+  try {
+    const value = original?.stack;
+    if (typeof value === 'string') stack = scrub(value, apiKey);
+  } catch { /* omit unsafe stack */ }
   const copy = new Error(message);
   copy.name = name;
   if (stack) copy.stack = stack;
@@ -366,12 +376,18 @@ function snapshotPlainData(value: unknown): PlainDataSnapshot {
           lengthDescriptor.value < 0
         ) return { ok: false };
         arrayLength = lengthDescriptor.value;
-        const indexCount = ownKeys.filter((key) => {
-          if (typeof key !== 'string' || key === 'length') return false;
+        const indexKeys = ownKeys.filter((key) => key !== 'length');
+        if (indexKeys.length !== arrayLength) return { ok: false };
+        const indexes = new Set<number>();
+        for (const key of indexKeys) {
+          if (typeof key !== 'string') return { ok: false };
           const index = Number(key);
-          return Number.isInteger(index) && index >= 0 && index < 4_294_967_295 && String(index) === key;
-        }).length;
-        if (indexCount !== arrayLength) return { ok: false };
+          if (!Number.isInteger(index) || index < 0 || index >= arrayLength || String(index) !== key) {
+            return { ok: false };
+          }
+          indexes.add(index);
+        }
+        if (indexes.size !== arrayLength) return { ok: false };
       }
       const target: unknown[] | Record<string, unknown> = isArray ? [] : Object.create(null);
       copies.set(source, target);

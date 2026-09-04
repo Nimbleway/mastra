@@ -433,6 +433,24 @@ describe('the API key stays server-only', () => {
     },
   );
 
+  it.each(['name', 'message', 'stack'] as const)(
+    'omits a non-string Error.%s value from the sanitized cause',
+    async (property) => {
+      const hostile = new Error('plain failure');
+      Object.defineProperty(hostile, property, {
+        configurable: true,
+        value: { secret: FAKE_KEY, includes: () => false },
+      });
+      const err = await nimbleAgentStartRunTool({
+        agentId: AGENT_ID,
+        apiKey: FAKE_KEY,
+        client: mockClient({ create: async () => { throw hostile; } }),
+      }).execute!({ task: 't' }, CTX).catch((caught: unknown) => caught);
+      expect(err).toBeInstanceOf(NimbleAgentRunError);
+      expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
+    },
+  );
+
   it.each(['create', 'status'] as const)(
     'sanitizes a proxy prototype trap during %s error mapping',
     async (operation) => {

@@ -314,6 +314,27 @@ describe('result tool', () => {
     expect(out.output).toMatchObject({ type: 'json', json: [1] });
   });
 
+  it('rejects array proxies that replace a required index with an out-of-range index', async () => {
+    const content = new Proxy([1], {
+      ownKeys: () => ['length', '2'],
+      getOwnPropertyDescriptor(target, key) {
+        if (key === '2') {
+          return { value: 1, enumerable: true, configurable: true, writable: true };
+        }
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+    const result = makeJsonResult();
+    result.output.content = content;
+    const client = mockClient({
+      get: async () => makeRun({ status: 'completed', is_active: false }),
+      result: async () => result,
+    });
+    await expect(
+      nimbleAgentRunResultTool({ ...cfg, client }).execute!({ runId: RUN_ID }, CTX),
+    ).rejects.toMatchObject({ reason: 'protocol', runId: RUN_ID, agentId: AGENT_ID });
+  });
+
   it('sanitizes callable proxy errors whose string conversion throws the API key', async () => {
     const callable = new Proxy(() => undefined, {
       get(target, key, receiver) {
