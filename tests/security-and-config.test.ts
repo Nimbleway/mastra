@@ -121,6 +121,21 @@ describe('the API key stays server-only', () => {
     expect(output).toMatchObject({ ready: true, output: { type: 'json' } });
   });
 
+  it('accepts credential-free structured output with shared object references', async () => {
+    const shared = { value: 'safe' };
+    const result = makeTextResult();
+    result.output = { type: 'json', content: { first: shared, second: shared }, trust: TRUST };
+    const output = await nimbleAgentRunResultTool({
+      agentId: AGENT_ID,
+      apiKey: FAKE_KEY,
+      client: mockClient({
+        get: async () => makeRun({ status: 'completed', is_active: false }),
+        result: async () => result,
+      }),
+    }).execute!({ runId: RUN_ID }, CTX);
+    expect(output).toMatchObject({ ready: true, output: { type: 'json' } });
+  });
+
   it('is scrubbed from error messages that echo it (create and read paths)', async () => {
     const leakyError = () => new Error(`401 unauthorized for key ${FAKE_KEY}`);
     const createErr = await nimbleAgentStartRunTool({

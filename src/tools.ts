@@ -174,7 +174,7 @@ function containsCredential(
       continue;
     }
     if (current === null || typeof current !== 'object') continue;
-    if (seen.has(current)) return true;
+    if (seen.has(current)) continue;
     seen.add(current);
     try {
       for (const [key, nested] of Object.entries(current)) {
