@@ -675,4 +675,25 @@ describe('result tool', () => {
     ).rejects.toBeInstanceOf(NimbleAgentRunError);
     expect(performance.now() - started).toBeLessThan(500);
   });
+
+  it('bounds the final result request by the original wait timeout', async () => {
+    const client = mockClient({
+      get: async () => makeRun({ status: 'completed', is_active: false }),
+      result: async (_runId, _query, options) =>
+        await new Promise((_, reject) => {
+          options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), {
+            once: true,
+          });
+        }),
+    });
+    const started = performance.now();
+    await expect(
+      nimbleAgentRunResultTool({
+        ...cfg,
+        client,
+        wait: { timeoutMs: 150, pollIntervalMs: 100 },
+      }).execute!({ runId: RUN_ID }, CTX),
+    ).rejects.toBeInstanceOf(NimbleAgentRunError);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
 });

@@ -212,6 +212,30 @@ describe('the API key stays server-only', () => {
     expect(protectedReads).toBe(0);
   });
 
+  it('does not turn an own __proto__ response field into inherited output', async () => {
+    const result = Object.create(null) as Record<string, unknown>;
+    Object.defineProperty(result, '__proto__', {
+      enumerable: true,
+      value: {
+        run: makeRun({ status: 'completed', is_active: false }),
+        output: { type: 'text', content: FAKE_KEY, trust: TRUST },
+      },
+    });
+    const err = await nimbleAgentRunResultTool({
+      agentId: AGENT_ID,
+      apiKey: FAKE_KEY,
+      client: mockClient({
+        get: async () => makeRun({ status: 'completed', is_active: false }),
+        result: async () => result as never,
+      }),
+    }).execute!({ runId: RUN_ID }, CTX).then(
+      () => { throw new Error('expected failure'); },
+      (error: unknown) => error as NimbleAgentRunError,
+    );
+    expect(err).toMatchObject({ reason: 'protocol', runId: RUN_ID, agentId: AGENT_ID });
+    expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
+  });
+
   it('accepts deeply nested structured output when it contains no credential', async () => {
     let content: Record<string, unknown> = { value: 'safe' };
     for (let depth = 0; depth < 50; depth += 1) content = { nested: content };

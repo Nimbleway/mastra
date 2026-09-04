@@ -349,7 +349,7 @@ function snapshotPlainData(value: unknown): PlainDataSnapshot {
       const isArray = Array.isArray(source);
       const prototype = Object.getPrototypeOf(source);
       if (!isArray && prototype !== Object.prototype && prototype !== null) return { ok: false };
-      const target: unknown[] | Record<string, unknown> = isArray ? [] : {};
+      const target: unknown[] | Record<string, unknown> = isArray ? [] : Object.create(null);
       copies.set(source, target);
       active.add(source);
       for (const key of Reflect.ownKeys(source)) {
@@ -359,7 +359,12 @@ function snapshotPlainData(value: unknown): PlainDataSnapshot {
         if (!descriptor || !('value' in descriptor) || !descriptor.enumerable) return { ok: false };
         const child = copy(descriptor.value);
         if (!child.ok) return child;
-        (target as Record<string, unknown>)[key] = child.value;
+        Object.defineProperty(target, key, {
+          value: child.value,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
       }
       active.delete(source);
       return { ok: true, value: target };
@@ -1093,7 +1098,7 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
         result = await client.agents.runs.result(
           input.runId,
           { agent_id: agentId },
-          requestOptions(signal),
+          requestOptions(wait ? initialSignal : signal),
         );
       } catch (err) {
         const httpStatus = readStatus(err);
