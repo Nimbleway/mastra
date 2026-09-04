@@ -126,15 +126,23 @@ function keyInErrorChain(err: unknown, apiKey: string, depth = 0): boolean {
   // closed instead of retaining a potentially credential-bearing raw cause.
   if (depth > 4) return true;
   const candidate = err as Error & { cause?: unknown };
-  if (typeof candidate.message === 'string' && candidate.message.includes(apiKey)) return true;
-  if (typeof candidate.stack === 'string' && candidate.stack.includes(apiKey)) return true;
+  try {
+    if (typeof candidate.message === 'string' && candidate.message.includes(apiKey)) return true;
+    if (typeof candidate.stack === 'string' && candidate.stack.includes(apiKey)) return true;
+  } catch {
+    return true;
+  }
   try {
     // Enumerable fields (e.g. an APIError's parsed response body) also count.
     if (JSON.stringify(candidate).includes(apiKey)) return true;
   } catch {
     return true; // circular / unserializable — assume dirty rather than leak
   }
-  return keyInErrorChain(candidate.cause, apiKey, depth + 1);
+  try {
+    return keyInErrorChain(candidate.cause, apiKey, depth + 1);
+  } catch {
+    return true;
+  }
 }
 
 /**
@@ -147,9 +155,15 @@ function keyInErrorChain(err: unknown, apiKey: string, depth = 0): boolean {
 function sanitizeCause(err: unknown, apiKey: string | undefined): unknown {
   if (!apiKey || !keyInErrorChain(err, apiKey)) return err;
   const original = err instanceof Error ? err : undefined;
-  const copy = new Error(scrub(original?.message ?? String(err), apiKey));
-  copy.name = scrub(original?.name ?? 'Error', apiKey);
-  if (original?.stack) copy.stack = scrub(original.stack, apiKey);
+  let message = 'Untrusted error details withheld';
+  let name = 'Error';
+  let stack: string | undefined;
+  try { message = scrub(original?.message ?? String(err), apiKey); } catch { /* keep safe default */ }
+  try { name = scrub(original?.name ?? 'Error', apiKey); } catch { /* keep safe default */ }
+  try { if (original?.stack) stack = scrub(original.stack, apiKey); } catch { /* omit unsafe stack */ }
+  const copy = new Error(message);
+  copy.name = name;
+  if (stack) copy.stack = stack;
   return copy;
 }
 
@@ -213,9 +227,11 @@ function safeCreateErrorRunId(
   apiKey: string | undefined,
 ): string | undefined {
   const runId = safeErrorMetadata(err.runId, apiKey);
-  const returnedAgentId = safeErrorMetadata(err.agentId, apiKey);
+  const returnedAgentId = err.agentId;
   return runId && /^task_run_[A-Za-z0-9_-]+$/.test(runId) &&
-    (returnedAgentId === undefined || returnedAgentId === agentId)
+    (returnedAgentId === undefined ||
+      (typeof returnedAgentId === 'string' &&
+        safeErrorMetadata(returnedAgentId, apiKey) === agentId))
     ? runId
     : undefined;
 }

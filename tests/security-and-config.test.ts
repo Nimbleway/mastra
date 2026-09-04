@@ -260,6 +260,22 @@ describe('the API key stays server-only', () => {
     expect(JSON.stringify(cause)).not.toContain(FAKE_KEY);
   });
 
+  it('does not propagate a credential-bearing throwing error-name accessor', async () => {
+    const hostile = new Error(`request exposed ${FAKE_KEY}`);
+    Object.defineProperty(hostile, 'name', {
+      get() { throw new Error(`name exposed ${FAKE_KEY}`); },
+    });
+    const err = await nimbleAgentStartRunTool({
+      agentId: AGENT_ID, apiKey: FAKE_KEY,
+      client: mockClient({ create: async () => { throw hostile; } }),
+    }).execute!({ task: 't' }, CTX).then(
+      () => { throw new Error('expected failure'); },
+      (e: unknown) => e as NimbleAgentRunError,
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
+  });
+
   it('is scrubbed when Error.cause is the primitive key value', async () => {
     const leaky = new Error('request failed', { cause: FAKE_KEY });
     const err = await nimbleAgentStartRunTool({
@@ -455,6 +471,22 @@ describe('the API key stays server-only', () => {
     );
     expect(err).toMatchObject({ agentId: AGENT_ID, createOutcome: 'unknown' });
     expect(err.runId).toBeUndefined();
+  });
+
+  it('drops a valid-looking run id when supplied agent metadata is unsafe', async () => {
+    const { NimbleAgentRunError } = await import('../src/errors');
+    const unsafeAgent = new NimbleAgentRunError('create failed', {
+      reason: 'request', runId: RUN_ID, agentId: `agent-${FAKE_KEY}`, createOutcome: 'unknown',
+    });
+    const err = await nimbleAgentStartRunTool({
+      agentId: AGENT_ID, apiKey: FAKE_KEY,
+      client: mockClient({ create: async () => { throw unsafeAgent; } }),
+    }).execute!({ task: 't' }, CTX).then(
+      () => { throw new Error('expected failure'); },
+      (e: unknown) => e as NimbleAgentRunError,
+    );
+    expect(err.runId).toBeUndefined();
+    expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
   });
 
   it('fails closed on runtime-invalid injected error metadata', async () => {
