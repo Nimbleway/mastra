@@ -632,6 +632,25 @@ describe('result tool', () => {
     expect(calls).toBe(2);
   });
 
+  it.each([
+    ['regular poll sleep', { timeoutMs: 5_000, pollIntervalMs: 100 }],
+    ['final remaining-time sleep', { timeoutMs: 50, pollIntervalMs: 100 }],
+  ])('sanitizes credential-bearing abort reasons from the %s', async (_name, wait) => {
+    const controller = new AbortController();
+    const client = mockClient({ get: async () => makeRun({ status: 'running' }) });
+    const pending = nimbleAgentRunResultTool({ ...cfg, client, wait }).execute!(
+      { runId: RUN_ID },
+      { abortSignal: controller.signal } as never,
+    );
+    setTimeout(() => controller.abort(new Error(`cancelled ${TEST_API_KEY}`)), 10);
+
+    const err = await pending.catch((caught: unknown) => caught);
+    expect(err).toBeInstanceOf(NimbleAgentRunError);
+    expect(err).toMatchObject({ runId: RUN_ID, agentId: AGENT_ID });
+    expect(String(err)).not.toContain(TEST_API_KEY);
+    expect(inspect(err, { depth: 5 })).not.toContain(TEST_API_KEY);
+  });
+
   it('bounds an in-flight status poll by the remaining wait timeout', async () => {
     let calls = 0;
     const client = mockClient({

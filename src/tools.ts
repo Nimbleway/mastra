@@ -1041,6 +1041,19 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
         }
       };
 
+      const sleepBeforePoll = async (ms: number): Promise<void> => {
+        try {
+          await sleep(ms, signal);
+        } catch (err) {
+          throw toAgentError(err, {
+            verb: 'wait',
+            ...ids,
+            apiKey,
+            allowErrorDetails,
+          });
+        }
+      };
+
       const startedWaiting = wait ? performance.now() : undefined;
       const initialDeadlineSignal = wait
         ? AbortSignal.timeout(wait.timeoutMs)
@@ -1062,10 +1075,10 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
           const remaining = wait.timeoutMs - elapsed;
           if (remaining <= 0) break;
           if (remaining <= wait.pollIntervalMs) {
-            await sleep(remaining, signal);
+            await sleepBeforePoll(remaining);
             break;
           }
-          await sleep(wait.pollIntervalMs, signal);
+          await sleepBeforePoll(wait.pollIntervalMs);
           const remainingAfterSleep = wait.timeoutMs - (performance.now() - waitStartedAt);
           if (remainingAfterSleep <= 0) break;
           const deadlineSignal = AbortSignal.timeout(Math.max(1, Math.ceil(remainingAfterSleep)));
