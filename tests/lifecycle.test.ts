@@ -290,6 +290,46 @@ describe('result tool', () => {
     ).rejects.toMatchObject({ reason: 'protocol', runId: RUN_ID, agentId: AGENT_ID });
   });
 
+  it('uses one validated array length descriptor when snapshotting proxy results', async () => {
+    let lengthReads = 0;
+    const content = new Proxy([1], {
+      getOwnPropertyDescriptor(target, key) {
+        const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
+        if (key !== 'length' || !descriptor) return descriptor;
+        lengthReads += 1;
+        return { ...descriptor, value: lengthReads === 1 ? 1 : 2 };
+      },
+    });
+    const result = makeJsonResult();
+    result.output.content = content;
+    const client = mockClient({
+      get: async () => makeRun({ status: 'completed', is_active: false }),
+      result: async () => result,
+    });
+    const out = (await nimbleAgentRunResultTool({ ...cfg, client }).execute!(
+      { runId: RUN_ID },
+      CTX,
+    )) as NimbleAgentRunCompletedOutput;
+    expect(lengthReads).toBe(1);
+    expect(out.output).toMatchObject({ type: 'json', json: [1] });
+  });
+
+  it('sanitizes callable proxy errors whose string conversion throws the API key', async () => {
+    const callable = new Proxy(() => undefined, {
+      get(target, key, receiver) {
+        if (key === Symbol.toPrimitive) throw new Error(`conversion ${TEST_API_KEY}`);
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const client = mockClient({ get: async () => { throw callable; } });
+    const err = await nimbleAgentRunResultTool({ ...cfg, client })
+      .execute!({ runId: RUN_ID }, CTX)
+      .catch((caught: unknown) => caught);
+    expect(err).toBeInstanceOf(NimbleAgentRunError);
+    expect(String(err)).not.toContain(TEST_API_KEY);
+    expect(inspect(err, { depth: 5 })).not.toContain(TEST_API_KEY);
+  });
+
   it('throws with runId preserved when the run failed / was cancelled', async () => {
     for (const status of ['failed', 'cancelled'] as const) {
       const client = mockClient({

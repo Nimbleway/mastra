@@ -149,7 +149,13 @@ function keyInErrorChain(
   seen = new WeakSet<object>(),
 ): boolean {
   if (err === null || err === undefined) return false;
-  if (typeof err !== 'object') return String(err).includes(apiKey);
+  if (typeof err !== 'object' && typeof err !== 'function') {
+    try {
+      return String(err).includes(apiKey);
+    } catch {
+      return true;
+    }
+  }
   // The remainder of an over-deep object chain cannot be proven clean. Fail
   // closed instead of retaining a potentially credential-bearing raw cause.
   if (depth > 4) return true;
@@ -350,6 +356,7 @@ function snapshotPlainData(value: unknown): PlainDataSnapshot {
       const prototype = Object.getPrototypeOf(source);
       if (!isArray && prototype !== Object.prototype && prototype !== null) return { ok: false };
       const ownKeys = Reflect.ownKeys(source);
+      let arrayLength: number | undefined;
       if (isArray) {
         const lengthDescriptor = Object.getOwnPropertyDescriptor(source, 'length');
         if (
@@ -358,26 +365,20 @@ function snapshotPlainData(value: unknown): PlainDataSnapshot {
           !Number.isSafeInteger(lengthDescriptor.value) ||
           lengthDescriptor.value < 0
         ) return { ok: false };
+        arrayLength = lengthDescriptor.value;
         const indexCount = ownKeys.filter((key) => {
           if (typeof key !== 'string' || key === 'length') return false;
           const index = Number(key);
           return Number.isInteger(index) && index >= 0 && index < 4_294_967_295 && String(index) === key;
         }).length;
-        if (indexCount !== lengthDescriptor.value) return { ok: false };
+        if (indexCount !== arrayLength) return { ok: false };
       }
       const target: unknown[] | Record<string, unknown> = isArray ? [] : Object.create(null);
       copies.set(source, target);
       active.add(source);
       for (const key of ownKeys) {
         if (isArray && key === 'length') {
-          const descriptor = Object.getOwnPropertyDescriptor(source, key);
-          if (
-            !descriptor ||
-            !('value' in descriptor) ||
-            !Number.isSafeInteger(descriptor.value) ||
-            descriptor.value < 0
-          ) return { ok: false };
-          Object.defineProperty(target, key, { value: descriptor.value, writable: true });
+          Object.defineProperty(target, key, { value: arrayLength, writable: true });
           continue;
         }
         if (typeof key !== 'string') return { ok: false };
