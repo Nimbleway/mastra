@@ -78,6 +78,7 @@ function readStatus(err: unknown): number | undefined {
 function asFailedResult(value: unknown): NimbleAgentRawFailedResult | undefined {
   try {
     if (typeof value !== 'object' || value === null) return undefined;
+    if (hasUnsafeAccessors(value)) return undefined;
     const candidate = value as Partial<NimbleAgentRawFailedResult>;
     if (
       typeof candidate.run?.status === 'string' &&
@@ -135,13 +136,15 @@ function keyInErrorChain(
   if (depth > 4) return true;
   if (seen.has(err)) return true;
   seen.add(err);
-  const candidate = err as Error;
-  try {
-    if (typeof candidate.name === 'string' && candidate.name.includes(apiKey)) return true;
-    if (typeof candidate.message === 'string' && candidate.message.includes(apiKey)) return true;
-    if (typeof candidate.stack === 'string' && candidate.stack.includes(apiKey)) return true;
-  } catch {
-    return true;
+  const candidate = err as object;
+  if (err instanceof Error) {
+    try {
+      if (typeof err.name === 'string' && err.name.includes(apiKey)) return true;
+      if (typeof err.message === 'string' && err.message.includes(apiKey)) return true;
+      if (typeof err.stack === 'string' && err.stack.includes(apiKey)) return true;
+    } catch {
+      return true;
+    }
   }
   try {
     // Inspect every own property without invoking custom toJSON methods or
@@ -588,6 +591,9 @@ function assertCreatedRun(
   agentId: string,
   apiKey: string | undefined,
 ): void {
+  if (hasUnsafeAccessors(run)) {
+    throw createProtocolError(agentId);
+  }
   if (
     !hasValidRunFields(run, apiKey) ||
     run.web_search_agent_id !== agentId ||

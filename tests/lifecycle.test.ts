@@ -358,6 +358,31 @@ describe('result tool', () => {
     },
   );
 
+  it('rejects a 422 envelope with a stateful error.message accessor', async () => {
+    const failed = makeFailedResult('first read');
+    let reads = 0;
+    Object.defineProperty(failed.error, 'message', {
+      get() {
+        reads += 1;
+        if (reads === 1) return 'first read';
+        throw new Error(`second read exposed ${FAKE_KEY}`);
+      },
+    });
+    const client = mockClient({
+      get: async () => makeRun({ status: 'completed', is_active: false }),
+      result: async () => { throw httpError(422, failed); },
+    });
+    const err = await nimbleAgentRunResultTool({ ...cfg, client })
+      .execute!({ runId: RUN_ID }, CTX)
+      .then(
+        () => { throw new Error('expected failure'); },
+        (error: unknown) => error as NimbleAgentRunError,
+      );
+    expect(reads).toBe(0);
+    expect(err.message).not.toContain(FAKE_KEY);
+    expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
+  });
+
   it.each(['queued', 'running', 'completed'] as const)('rejects a 422 envelope with non-failure status %s', async (status) => {
     const client = mockClient({
       get: async () => makeRun({ status: 'completed', is_active: false }),

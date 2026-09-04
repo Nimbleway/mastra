@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import { inspect } from 'node:util';
 import { nimbleAgentStartRunTool, nimbleAgentRunStatusTool } from '../src/tools';
 import { NimbleAgentRunError } from '../src/errors';
-import { AGENT_ID, CTX, FAKE_KEY, RUN_ID, jsonResponse, makeRun } from './fixtures';
+import { AGENT_ID, CTX, FAKE_KEY, RUN_ID, jsonResponse, makeRun, mockClient } from './fixtures';
 
 /**
  * Attempt-count contract, proven against the REAL `@nimble-way/nimble-js`
@@ -173,6 +174,31 @@ describe('run creation is one-shot', () => {
     expect(err).toMatchObject({ reason: 'protocol', agentId: AGENT_ID });
     expect(err.runId).toBeUndefined();
   });
+
+  it.each(['id', 'web_search_agent_id'] as const)(
+    'rejects an accepted create response with a throwing %s accessor',
+    async (property) => {
+      const run = makeRun();
+      Object.defineProperty(run, property, {
+        get() { throw new Error(`${property} exposed ${FAKE_KEY}`); },
+      });
+      const err = await nimbleAgentStartRunTool({
+        agentId: AGENT_ID,
+        apiKey: FAKE_KEY,
+        client: mockClient({ create: async () => run }),
+      }).execute!({ task: 'research x' }, CTX).then(
+        () => { throw new Error('expected failure'); },
+        (error: unknown) => error as NimbleAgentRunError,
+      );
+      expect(err).toMatchObject({
+        reason: 'protocol',
+        agentId: AGENT_ID,
+        createOutcome: 'unknown',
+      });
+      expect(err.runId).toBeUndefined();
+      expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
+    },
+  );
 });
 
 describe('ambiguous-outcome guidance', () => {
