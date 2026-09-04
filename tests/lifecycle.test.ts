@@ -276,6 +276,20 @@ describe('result tool', () => {
     expect(out.output).toMatchObject({ type: 'json', json: { rows: [{ name: 'x' }] } });
   });
 
+  it('rejects sparse arrays instead of silently changing their length or holes', async () => {
+    const sparse = [1] as unknown[];
+    sparse.length = 3;
+    const result = makeJsonResult();
+    result.output.content = sparse;
+    const client = mockClient({
+      get: async () => makeRun({ status: 'completed', is_active: false }),
+      result: async () => result,
+    });
+    await expect(
+      nimbleAgentRunResultTool({ ...cfg, client }).execute!({ runId: RUN_ID }, CTX),
+    ).rejects.toMatchObject({ reason: 'protocol', runId: RUN_ID, agentId: AGENT_ID });
+  });
+
   it('throws with runId preserved when the run failed / was cancelled', async () => {
     for (const status of ['failed', 'cancelled'] as const) {
       const client = mockClient({
@@ -630,6 +644,20 @@ describe('result tool', () => {
     }).execute!({ runId: RUN_ID }, CTX);
     expect(out).toMatchObject({ ready: false, status: 'running' });
     expect(calls).toBe(2);
+  });
+
+  it('normalizes fractional wait durations before constructing timeout signals', async () => {
+    const client = mockClient({
+      get: async () => makeRun({ status: 'completed', is_active: false }),
+      result: async () => makeTextResult(),
+    });
+    await expect(
+      nimbleAgentRunResultTool({
+        ...cfg,
+        client,
+        wait: { timeoutMs: 150.5, pollIntervalMs: 100.5 },
+      }).execute!({ runId: RUN_ID }, CTX),
+    ).resolves.toMatchObject({ ready: true, status: 'completed' });
   });
 
   it.each([

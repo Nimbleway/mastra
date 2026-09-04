@@ -349,11 +349,37 @@ function snapshotPlainData(value: unknown): PlainDataSnapshot {
       const isArray = Array.isArray(source);
       const prototype = Object.getPrototypeOf(source);
       if (!isArray && prototype !== Object.prototype && prototype !== null) return { ok: false };
+      const ownKeys = Reflect.ownKeys(source);
+      if (isArray) {
+        const lengthDescriptor = Object.getOwnPropertyDescriptor(source, 'length');
+        if (
+          !lengthDescriptor ||
+          !('value' in lengthDescriptor) ||
+          !Number.isSafeInteger(lengthDescriptor.value) ||
+          lengthDescriptor.value < 0
+        ) return { ok: false };
+        const indexCount = ownKeys.filter((key) => {
+          if (typeof key !== 'string' || key === 'length') return false;
+          const index = Number(key);
+          return Number.isInteger(index) && index >= 0 && index < 4_294_967_295 && String(index) === key;
+        }).length;
+        if (indexCount !== lengthDescriptor.value) return { ok: false };
+      }
       const target: unknown[] | Record<string, unknown> = isArray ? [] : Object.create(null);
       copies.set(source, target);
       active.add(source);
-      for (const key of Reflect.ownKeys(source)) {
-        if (isArray && key === 'length') continue;
+      for (const key of ownKeys) {
+        if (isArray && key === 'length') {
+          const descriptor = Object.getOwnPropertyDescriptor(source, key);
+          if (
+            !descriptor ||
+            !('value' in descriptor) ||
+            !Number.isSafeInteger(descriptor.value) ||
+            descriptor.value < 0
+          ) return { ok: false };
+          Object.defineProperty(target, key, { value: descriptor.value, writable: true });
+          continue;
+        }
         if (typeof key !== 'string') return { ok: false };
         const descriptor = Object.getOwnPropertyDescriptor(source, key);
         if (!descriptor || !('value' in descriptor) || !descriptor.enumerable) return { ok: false };
@@ -858,8 +884,12 @@ function abortReason(signal: AbortSignal | undefined): unknown {
  * `??` would treat as "provided", leaving a `NaN` timeout that never trips the
  * `remaining <= 0` break and a `NaN` sleep that coerces to a 0ms tight poll.
  */
-function positiveFinite(value: number | undefined, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback;
+function positiveDuration(value: number | undefined, fallback: number): number {
+  const duration =
+    typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback;
+  // AbortSignal.timeout requires an integer; this bound also avoids setTimeout's
+  // platform overflow behavior for very large delays.
+  return Math.min(Math.ceil(duration), 2_147_483_647);
 }
 
 function normalizeWait(
@@ -868,9 +898,9 @@ function normalizeWait(
   if (!wait) return undefined;
   const options = wait === true ? {} : wait;
   return {
-    timeoutMs: positiveFinite(options.timeoutMs, NIMBLE_AGENT_DEFAULTS.waitTimeoutMs),
+    timeoutMs: positiveDuration(options.timeoutMs, NIMBLE_AGENT_DEFAULTS.waitTimeoutMs),
     pollIntervalMs: Math.max(
-      positiveFinite(options.pollIntervalMs, NIMBLE_AGENT_DEFAULTS.pollIntervalMs),
+      positiveDuration(options.pollIntervalMs, NIMBLE_AGENT_DEFAULTS.pollIntervalMs),
       NIMBLE_AGENT_DEFAULTS.minPollIntervalMs,
     ),
   };
