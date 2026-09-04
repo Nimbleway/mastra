@@ -341,6 +341,57 @@ describe('the API key stays server-only', () => {
     expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
   });
 
+  it.each(['name', 'message', 'stack'] as const)(
+    'rejects a stateful Error.%s display accessor before preserving the cause',
+    async (property) => {
+      const hostile = new Error('plain failure');
+      let reads = 0;
+      Object.defineProperty(hostile, property, {
+        configurable: true,
+        get() {
+          reads += 1;
+          return reads === 1 ? 'clean' : FAKE_KEY;
+        },
+      });
+      const err = await nimbleAgentStartRunTool({
+        agentId: AGENT_ID,
+        apiKey: FAKE_KEY,
+        client: mockClient({ create: async () => { throw hostile; } }),
+      }).execute!({ task: 't' }, CTX).then(
+        () => { throw new Error('expected failure'); },
+        (error: unknown) => error as NimbleAgentRunError,
+      );
+      expect(err.cause).not.toBe(hostile);
+      expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
+    },
+  );
+
+  it.each(['create', 'status'] as const)(
+    'sanitizes a proxy prototype trap during %s error mapping',
+    async (operation) => {
+      const hostile = new Proxy({ message: 'request failed' }, {
+        getPrototypeOf() {
+          throw new Error(`prototype trap exposed ${FAKE_KEY}`);
+        },
+      });
+      const client = mockClient({
+        create: async () => { throw hostile; },
+        get: async () => { throw hostile; },
+      });
+      const promise = operation === 'create'
+        ? nimbleAgentStartRunTool({ agentId: AGENT_ID, apiKey: FAKE_KEY, client })
+            .execute!({ task: 't' }, CTX)
+        : nimbleAgentRunStatusTool({ agentId: AGENT_ID, apiKey: FAKE_KEY, client })
+            .execute!({ runId: RUN_ID }, CTX);
+      const err = await promise.then(
+        () => { throw new Error('expected failure'); },
+        (error: unknown) => error as NimbleAgentRunError,
+      );
+      expect(err).toBeInstanceOf(NimbleAgentRunError);
+      expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
+    },
+  );
+
   it.each(['message', 'cause', 'status'] as const)(
     'does not propagate a credential-bearing throwing %s accessor',
     async (property) => {
@@ -441,7 +492,7 @@ describe('the API key stays server-only', () => {
     expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
   });
 
-  it('keeps a clean cause untouched for full debug fidelity', async () => {
+  it('keeps clean cause details in a safe snapshot', async () => {
     const clean = new Error('plain network hiccup');
     const err = await nimbleAgentStartRunTool({
       agentId: AGENT_ID,
@@ -459,7 +510,8 @@ describe('the API key stays server-only', () => {
         },
         (e: unknown) => e as NimbleAgentRunError,
       );
-    expect(err.cause).toBe(clean);
+    expect(err.cause).not.toBe(clean);
+    expect(err.cause).toMatchObject({ message: 'plain network hiccup' });
   });
 
   it('withholds error details and raw causes for an injected client with an unknown key', async () => {

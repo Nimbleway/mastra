@@ -123,6 +123,22 @@ function scrub(text: string, apiKey: string | undefined): string {
   return apiKey && text.includes(apiKey) ? text.split(apiKey).join('[redacted]') : text;
 }
 
+function isErrorObject(value: unknown): value is Error {
+  try {
+    return value instanceof Error;
+  } catch {
+    return false;
+  }
+}
+
+function isNimbleRunError(value: unknown): value is NimbleAgentRunError {
+  try {
+    return value instanceof NimbleAgentRunError;
+  } catch {
+    return false;
+  }
+}
+
 /** True when the key appears anywhere in the error's message/stack/body chain. */
 function keyInErrorChain(
   err: unknown,
@@ -138,7 +154,7 @@ function keyInErrorChain(
   if (seen.has(err)) return true;
   seen.add(err);
   const candidate = err as object;
-  if (err instanceof Error) {
+  if (isErrorObject(err)) {
     try {
       if (typeof err.name === 'string' && err.name.includes(apiKey)) return true;
       if (typeof err.message === 'string' && err.message.includes(apiKey)) return true;
@@ -160,12 +176,12 @@ function keyInErrorChain(
     // Inspect every own property without invoking custom toJSON methods or
     // getters. Node's console formatter includes enumerable symbol keys.
     for (const key of Reflect.ownKeys(candidate)) {
-      if (key === 'name' || key === 'message' || key === 'stack') continue;
       if (typeof key === 'symbol' && String(key).includes(apiKey)) return true;
       if (typeof key === 'string' && key.includes(apiKey)) return true;
       const descriptor = Object.getOwnPropertyDescriptor(candidate, key);
       if (!descriptor) return true;
       if ('get' in descriptor || 'set' in descriptor) return true;
+      if (key === 'name' || key === 'message' || key === 'stack') continue;
       if (keyInErrorChain(descriptor.value, apiKey, depth + 1, seen)) return true;
     }
   } catch {
@@ -178,12 +194,12 @@ function keyInErrorChain(
  * `Error.cause` is printed by `console.error`/`util.inspect` in every
  * downstream consumer, so a raw cause whose message, stack, or response body
  * echoes the key would leak it even though the outer message is scrubbed.
- * Clean causes pass through untouched (full debug fidelity); dirty ones are
- * replaced by a flat, scrubbed copy.
+ * Proven-inert causes pass through untouched; accessor-backed or dirty ones
+ * are replaced by a flat, scrubbed copy.
  */
 function sanitizeCause(err: unknown, apiKey: string | undefined): unknown {
   if (!apiKey || !keyInErrorChain(err, apiKey)) return err;
-  const original = err instanceof Error ? err : undefined;
+  const original = isErrorObject(err) ? err : undefined;
   let message = 'Untrusted error details withheld';
   let name = 'Error';
   let stack: string | undefined;
@@ -338,7 +354,8 @@ function toAgentError(
     allowErrorDetails: boolean;
   },
 ): NimbleAgentRunError {
-  if (err instanceof NimbleAgentRunError) {
+  const nimbleError = isNimbleRunError(err);
+  if (nimbleError) {
     const runRef = context.runId ? ` (run ${context.runId})` : '';
     const status = safeErrorProperty(err, 'status');
     const detail = context.allowErrorDetails
@@ -400,7 +417,8 @@ function toCreateError(
   err: unknown,
   context: { agentId: string; apiKey?: string; allowErrorDetails: boolean },
 ): NimbleAgentRunError {
-  const suppliedOutcome = err instanceof NimbleAgentRunError
+  const nimbleError = isNimbleRunError(err);
+  const suppliedOutcome = nimbleError
     ? safeCreateOutcome(safeErrorProperty(err, 'createOutcome'))
     : undefined;
   const outcome = suppliedOutcome ?? classifyCreateOutcome(err);
@@ -413,32 +431,32 @@ function toCreateError(
       : 'The run may or may not have been created server-side. Do not automatically start ' +
         'another run — list recent runs for this agent (or check the Nimble console) to ' +
         'reconcile before creating again.';
-  const status = err instanceof NimbleAgentRunError
+  const status = nimbleError
     ? safeErrorProperty(err, 'status')
     : undefined;
   const recoveredRunId =
-    context.allowErrorDetails && err instanceof NimbleAgentRunError
+    context.allowErrorDetails && nimbleError
       ? safeCreateErrorRunId(err, context.agentId, context.apiKey)
       : undefined;
   const runRef = recoveredRunId ? ` (run ${recoveredRunId})` : '';
   return new NimbleAgentRunError(`Nimble agent run creation failed${runRef}: ${message} ${guidance}`, {
-    reason: err instanceof NimbleAgentRunError
+    reason: nimbleError
       ? safeErrorReason(safeErrorProperty(err, 'reason'))
       : 'request',
     runId: recoveredRunId,
     agentId: context.agentId,
     runStatus:
-      context.allowErrorDetails && err instanceof NimbleAgentRunError
+      context.allowErrorDetails && nimbleError
         ? safeErrorMetadata(safeErrorProperty(err, 'runStatus'), context.apiKey)
         : undefined,
     status:
-      err instanceof NimbleAgentRunError && typeof status === 'number'
+      nimbleError && typeof status === 'number'
         ? status
         : readStatus(err),
     createOutcome: outcome,
     cause: context.allowErrorDetails
       ? sanitizeCause(
-          err instanceof NimbleAgentRunError ? safeErrorProperty(err, 'cause') : err,
+          nimbleError ? safeErrorProperty(err, 'cause') : err,
           context.apiKey,
         )
       : undefined,
