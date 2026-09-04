@@ -334,6 +334,21 @@ describe('result tool', () => {
     ).rejects.toMatchObject({ reason: 'failed', message: expect.stringContaining('wrapped failure') });
   });
 
+  it.each([undefined, 42])(
+    'rejects a 422 failed envelope with invalid error.ref_id %s',
+    async (refId) => {
+      const failed = makeFailedResult('failed');
+      Object.assign(failed.error, { ref_id: refId });
+      const client = mockClient({
+        get: async () => makeRun({ status: 'completed', is_active: false }),
+        result: async () => { throw httpError(422, failed); },
+      });
+      await expect(
+        nimbleAgentRunResultTool({ ...cfg, client }).execute!({ runId: RUN_ID }, CTX),
+      ).rejects.toMatchObject({ reason: 'protocol', runId: RUN_ID, agentId: AGENT_ID });
+    },
+  );
+
   it.each(['error', 'detail'] as const)(
     'sanitizes a 422 with a throwing %s accessor',
     async (property) => {
@@ -569,6 +584,21 @@ describe('result tool', () => {
       nimbleAgentRunResultTool({ ...cfg, client }).execute!({ runId: RUN_ID }, CTX),
     ).rejects.toMatchObject({ reason: 'failed', message: expect.stringContaining('late failure') });
   });
+
+  it.each([undefined, 42])(
+    'rejects a returned failed envelope with invalid error.ref_id %s',
+    async (refId) => {
+      const failed = makeFailedResult('failed');
+      Object.assign(failed.error, { ref_id: refId });
+      const client = mockClient({
+        get: async () => makeRun({ status: 'completed', is_active: false }),
+        result: async () => failed,
+      });
+      await expect(
+        nimbleAgentRunResultTool({ ...cfg, client }).execute!({ runId: RUN_ID }, CTX),
+      ).rejects.toMatchObject({ reason: 'protocol', runId: RUN_ID, agentId: AGENT_ID });
+    },
+  );
 
   it('opt-in wait polls until completion and honors the interval floor', async () => {
     let calls = 0;

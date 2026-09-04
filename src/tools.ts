@@ -82,7 +82,8 @@ function asFailedResult(value: unknown): NimbleAgentRawFailedResult | undefined 
     const candidate = value as Partial<NimbleAgentRawFailedResult>;
     if (
       typeof candidate.run?.status === 'string' &&
-      typeof candidate.error?.message === 'string'
+      typeof candidate.error?.message === 'string' &&
+      typeof candidate.error.ref_id === 'string'
     ) {
       return candidate as NimbleAgentRawFailedResult;
     }
@@ -1033,6 +1034,7 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
               allowErrorDetails,
             );
           }
+          throw protocolError(ids);
         }
         throw toAgentError(err, {
           verb: 'result fetch',
