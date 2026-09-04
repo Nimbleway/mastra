@@ -76,14 +76,16 @@ function readStatus(err: unknown): number | undefined {
 }
 
 function asFailedResult(value: unknown): NimbleAgentRawFailedResult | undefined {
-  if (typeof value !== 'object' || value === null) return undefined;
-  const candidate = value as Partial<NimbleAgentRawFailedResult>;
-  if (
-    typeof candidate.run?.status === 'string' &&
-    typeof candidate.error?.message === 'string'
-  ) {
-    return candidate as NimbleAgentRawFailedResult;
-  }
+  try {
+    if (typeof value !== 'object' || value === null) return undefined;
+    const candidate = value as Partial<NimbleAgentRawFailedResult>;
+    if (
+      typeof candidate.run?.status === 'string' &&
+      typeof candidate.error?.message === 'string'
+    ) {
+      return candidate as NimbleAgentRawFailedResult;
+    }
+  } catch { /* hostile response accessor */ }
   return undefined;
 }
 
@@ -95,10 +97,9 @@ function asFailedResult(value: unknown): NimbleAgentRawFailedResult | undefined 
  * shape.
  */
 function readFailedResultBody(err: unknown): NimbleAgentRawFailedResult | undefined {
-  if (typeof err !== 'object' || err === null || !('error' in err)) return undefined;
-  const body = (err as { error?: unknown }).error;
+  const body = safeErrorProperty(err, 'error');
   if (typeof body !== 'object' || body === null) return undefined;
-  return asFailedResult(body) ?? asFailedResult((body as { detail?: unknown }).detail);
+  return asFailedResult(body) ?? asFailedResult(safeErrorProperty(body, 'detail'));
 }
 
 interface AgentContext {
@@ -121,13 +122,20 @@ function scrub(text: string, apiKey: string | undefined): string {
 }
 
 /** True when the key appears anywhere in the error's message/stack/body chain. */
-function keyInErrorChain(err: unknown, apiKey: string, depth = 0): boolean {
+function keyInErrorChain(
+  err: unknown,
+  apiKey: string,
+  depth = 0,
+  seen = new WeakSet<object>(),
+): boolean {
   if (err === null || err === undefined) return false;
   if (typeof err !== 'object') return String(err).includes(apiKey);
   // The remainder of an over-deep object chain cannot be proven clean. Fail
   // closed instead of retaining a potentially credential-bearing raw cause.
   if (depth > 4) return true;
-  const candidate = err as Error & { cause?: unknown };
+  if (seen.has(err)) return true;
+  seen.add(err);
+  const candidate = err as Error;
   try {
     if (typeof candidate.name === 'string' && candidate.name.includes(apiKey)) return true;
     if (typeof candidate.message === 'string' && candidate.message.includes(apiKey)) return true;
@@ -136,16 +144,21 @@ function keyInErrorChain(err: unknown, apiKey: string, depth = 0): boolean {
     return true;
   }
   try {
-    // Enumerable fields (e.g. an APIError's parsed response body) also count.
-    if (JSON.stringify(candidate).includes(apiKey)) return true;
-  } catch {
-    return true; // circular / unserializable — assume dirty rather than leak
-  }
-  try {
-    return keyInErrorChain(candidate.cause, apiKey, depth + 1);
+    // Inspect every own property without invoking custom toJSON methods or
+    // getters. Node's console formatter includes enumerable symbol keys.
+    for (const key of Reflect.ownKeys(candidate)) {
+      if (key === 'name' || key === 'message' || key === 'stack') continue;
+      if (typeof key === 'symbol' && String(key).includes(apiKey)) return true;
+      if (typeof key === 'string' && key.includes(apiKey)) return true;
+      const descriptor = Object.getOwnPropertyDescriptor(candidate, key);
+      if (!descriptor) return true;
+      if ('get' in descriptor || 'set' in descriptor) return true;
+      if (keyInErrorChain(descriptor.value, apiKey, depth + 1, seen)) return true;
+    }
   } catch {
     return true;
   }
+  return false;
 }
 
 /**
@@ -884,13 +897,24 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
         }
       };
 
-      let run = await getRun();
+      const startedWaiting = wait ? performance.now() : undefined;
+      const initialDeadlineSignal = wait
+        ? AbortSignal.timeout(wait.timeoutMs)
+        : undefined;
+      const initialSignal = initialDeadlineSignal
+        ? signal
+          ? AbortSignal.any([signal, initialDeadlineSignal])
+          : initialDeadlineSignal
+        : signal;
+      let run = await getRun(initialSignal);
       assertKnownStatus(run, ids);
 
       if (wait && run.is_active) {
-        const startedWaiting = performance.now();
+        // Established before the initial status request, so timeoutMs bounds
+        // the complete wait operation rather than only follow-up polls.
+        const waitStartedAt = startedWaiting!;
         while (run.is_active) {
-          const elapsed = performance.now() - startedWaiting;
+          const elapsed = performance.now() - waitStartedAt;
           const remaining = wait.timeoutMs - elapsed;
           if (remaining <= 0) break;
           if (remaining <= wait.pollIntervalMs) {
@@ -898,7 +922,7 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
             break;
           }
           await sleep(wait.pollIntervalMs, signal);
-          const remainingAfterSleep = wait.timeoutMs - (performance.now() - startedWaiting);
+          const remainingAfterSleep = wait.timeoutMs - (performance.now() - waitStartedAt);
           if (remainingAfterSleep <= 0) break;
           const deadlineSignal = AbortSignal.timeout(Math.max(1, Math.ceil(remainingAfterSleep)));
           const requestSignal = signal
@@ -911,7 +935,7 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
             if (deadlineSignal.aborted && !signal?.aborted) break;
             throw err;
           }
-          if (performance.now() - startedWaiting >= wait.timeoutMs) break;
+          if (performance.now() - waitStartedAt >= wait.timeoutMs) break;
           run = fetched;
           assertKnownStatus(run, ids);
         }

@@ -334,6 +334,30 @@ describe('the API key stays server-only', () => {
     expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
   });
 
+  it.each(['symbol field', 'custom toJSON'] as const)(
+    'scrubs credential-bearing causes hidden by %s',
+    async (variant) => {
+      const hostile = new Error('plain failure') as Error & {
+        toJSON?: () => unknown;
+        [key: symbol]: unknown;
+      };
+      if (variant === 'symbol field') {
+        hostile[Symbol('detail')] = FAKE_KEY;
+      } else {
+        Object.assign(hostile, { detail: FAKE_KEY });
+        hostile.toJSON = () => ({ message: 'clean' });
+      }
+      const err = await nimbleAgentStartRunTool({
+        agentId: AGENT_ID, apiKey: FAKE_KEY,
+        client: mockClient({ create: async () => { throw hostile; } }),
+      }).execute!({ task: 't' }, CTX).then(
+        () => { throw new Error('expected failure'); },
+        (e: unknown) => e as NimbleAgentRunError,
+      );
+      expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
+    },
+  );
+
   it('keeps a clean cause untouched for full debug fidelity', async () => {
     const clean = new Error('plain network hiccup');
     const err = await nimbleAgentStartRunTool({

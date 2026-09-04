@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { inspect } from 'node:util';
 import {
   nimbleAgentRunResultTool,
   nimbleAgentRunStatusTool,
@@ -333,6 +334,30 @@ describe('result tool', () => {
     ).rejects.toMatchObject({ reason: 'failed', message: expect.stringContaining('wrapped failure') });
   });
 
+  it.each(['error', 'detail'] as const)(
+    'sanitizes a 422 with a throwing %s accessor',
+    async (property) => {
+      const err = httpError(422);
+      const target = property === 'error' ? err : {};
+      if (property === 'detail') err.error = target;
+      Object.defineProperty(target, property, {
+        get() { throw new Error(`${property} exposed ${FAKE_KEY}`); },
+      });
+      const client = mockClient({
+        get: async () => makeRun({ status: 'completed', is_active: false }),
+        result: async () => { throw err; },
+      });
+      const mapped = await nimbleAgentRunResultTool({ ...cfg, client })
+        .execute!({ runId: RUN_ID }, CTX)
+        .then(
+          () => { throw new Error('expected failure'); },
+          (error: unknown) => error as NimbleAgentRunError,
+        );
+      expect(mapped.message).not.toContain(FAKE_KEY);
+      expect(inspect(mapped, { depth: 20 })).not.toContain(FAKE_KEY);
+    },
+  );
+
   it.each(['queued', 'running', 'completed'] as const)('rejects a 422 envelope with non-failure status %s', async (status) => {
     const client = mockClient({
       get: async () => makeRun({ status: 'completed', is_active: false }),
@@ -573,6 +598,26 @@ describe('result tool', () => {
     }).execute!({ runId: RUN_ID }, CTX);
     expect(out).toMatchObject({ ready: false, status: 'running' });
     expect(calls).toBe(2);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it('bounds the initial status request by the wait timeout', async () => {
+    const client = mockClient({
+      get: async (_runId, _query, options) =>
+        await new Promise((_, reject) => {
+          options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), {
+            once: true,
+          });
+        }),
+    });
+    const started = performance.now();
+    await expect(
+      nimbleAgentRunResultTool({
+        ...cfg,
+        client,
+        wait: { timeoutMs: 150, pollIntervalMs: 100 },
+      }).execute!({ runId: RUN_ID }, CTX),
+    ).rejects.toBeInstanceOf(NimbleAgentRunError);
     expect(performance.now() - started).toBeLessThan(500);
   });
 });
