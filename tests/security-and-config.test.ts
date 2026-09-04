@@ -104,6 +104,23 @@ describe('the API key stays server-only', () => {
     expect(inspect(err, { depth: 20 })).not.toContain(unusualKey);
   });
 
+  it('accepts deeply nested structured output when it contains no credential', async () => {
+    let content: Record<string, unknown> = { value: 'safe' };
+    for (let depth = 0; depth < 50; depth += 1) content = { nested: content };
+    const result = makeTextResult();
+    result.output = { type: 'json', content, trust: TRUST };
+    const output = await nimbleAgentRunResultTool({
+      agentId: AGENT_ID,
+      apiKey: FAKE_KEY,
+      client: mockClient({
+        get: async () => makeRun({ status: 'completed', is_active: false }),
+        result: async () => result,
+      }),
+    }).execute!({ runId: RUN_ID }, CTX);
+
+    expect(output).toMatchObject({ ready: true, output: { type: 'json' } });
+  });
+
   it('is scrubbed from error messages that echo it (create and read paths)', async () => {
     const leakyError = () => new Error(`401 unauthorized for key ${FAKE_KEY}`);
     const createErr = await nimbleAgentStartRunTool({

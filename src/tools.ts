@@ -163,23 +163,29 @@ function safeErrorMetadata(value: unknown, apiKey: string | undefined): string |
 function containsCredential(
   value: unknown,
   apiKey: string | undefined,
-  seen = new WeakSet<object>(),
-  depth = 0,
 ): boolean {
   if (!apiKey) return false;
-  if (typeof value === 'string') return value.includes(apiKey);
-  if (value === null || typeof value !== 'object') return false;
-  // Cycles and unexpectedly deep/uninspectable response objects cannot be
-  // proven safe for model-visible output, so reject them.
-  if (seen.has(value) || depth > 20) return true;
-  seen.add(value);
-  try {
-    return Object.entries(value).some(
-      ([key, nested]) => key.includes(apiKey) || containsCredential(nested, apiKey, seen, depth + 1),
-    );
-  } catch {
-    return true;
+  const pending: unknown[] = [value];
+  const seen = new WeakSet<object>();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (typeof current === 'string') {
+      if (current.includes(apiKey)) return true;
+      continue;
+    }
+    if (current === null || typeof current !== 'object') continue;
+    if (seen.has(current)) return true;
+    seen.add(current);
+    try {
+      for (const [key, nested] of Object.entries(current)) {
+        if (key.includes(apiKey)) return true;
+        pending.push(nested);
+      }
+    } catch {
+      return true;
+    }
   }
+  return false;
 }
 
 function safeErrorReason(value: unknown): NimbleAgentRunErrorReason {
