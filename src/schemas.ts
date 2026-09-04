@@ -177,10 +177,10 @@ export const nimbleAgentRunPendingOutputSchema = z.object({
   ready: z.literal(false),
   runId: z.string(),
   agentId: z.string(),
-  status: z.enum(['queued', 'running']),
+  status: z.enum(['queued', 'running', 'unknown']),
   isActive: z.literal(true),
-  effort: effortSchema,
-  createdAt: z.string(),
+  effort: effortSchema.optional(),
+  createdAt: z.string().optional(),
   startedAt: z.string().optional(),
 });
 

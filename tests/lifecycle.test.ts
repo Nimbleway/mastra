@@ -780,7 +780,13 @@ describe('result tool', () => {
         client,
         wait: { timeoutMs: 150, pollIntervalMs: 100 },
       }).execute!({ runId: RUN_ID }, CTX),
-    ).rejects.toBeInstanceOf(NimbleAgentRunError);
+    ).resolves.toMatchObject({
+      ready: false,
+      runId: RUN_ID,
+      agentId: AGENT_ID,
+      status: 'unknown',
+      isActive: true,
+    });
     expect(performance.now() - started).toBeLessThan(500);
   });
 

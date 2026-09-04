@@ -252,6 +252,27 @@ describe('ambiguous-outcome guidance', () => {
     },
   );
 
+  it('reads a stateful create-error status once for classification and metadata', async () => {
+    const injected = new NimbleAgentRunError('stateful status', {
+      reason: 'request',
+      createOutcome: 'not-created',
+    });
+    let reads = 0;
+    Object.defineProperty(injected, 'status', {
+      get() { reads += 1; return reads === 1 ? 400 : 503; },
+    });
+    const tool = nimbleAgentStartRunTool({
+      agentId: AGENT_ID,
+      apiKey: FAKE_KEY,
+      client: mockClient({ create: async () => { throw injected; } }),
+    });
+    const err = await tool.execute!({ task: 't' }, CTX)
+      .catch((caught: unknown) => caught) as NimbleAgentRunError;
+    expect(reads).toBe(1);
+    expect(err).toMatchObject({ status: 400, createOutcome: 'not-created' });
+    expect(err.message).toContain('No run was created');
+  });
+
   for (const status of [429, 422, 400, 401]) {
     it(`HTTP ${status}: outcome not-created — definite rejection`, async () => {
       const err = await captureError(status);

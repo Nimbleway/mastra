@@ -126,6 +126,8 @@ const result = nimbleAgentRunResultTool({
 
 `wait` is opt-in and bounded: when the timeout elapses the tool returns
 `{ ready: false }` and the run keeps going server-side — check again later.
+If the initial status request itself reaches that deadline, `status` is
+`unknown` because no lifecycle snapshot was received.
 Without `wait` (the default) the result tool never blocks.
 
 ## Answers and trust

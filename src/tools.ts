@@ -452,8 +452,7 @@ function toAgentError(
  * connection drop) is ambiguous: the POST may have reached the server and
  * created a billed run whose ID we never received.
  */
-function classifyCreateOutcome(err: unknown): NimbleAgentCreateOutcome {
-  const status = readStatus(err);
+function classifyCreateOutcome(status: number | undefined): NimbleAgentCreateOutcome {
   // 408 is a timeout (request may have landed) and 409 is a state conflict
   // (the server processed something) — both stay 'unknown' so the caller
   // reconciles instead of re-creating. Other 4xx are definite rejections.
@@ -471,10 +470,11 @@ function toCreateError(
   context: { agentId: string; apiKey?: string; allowErrorDetails: boolean },
 ): NimbleAgentRunError {
   const nimbleError = isNimbleRunError(err);
+  const status = readStatus(err);
   const suppliedOutcome = nimbleError
     ? safeCreateOutcome(safeErrorProperty(err, 'createOutcome'))
     : undefined;
-  const classifiedOutcome = classifyCreateOutcome(err);
+  const classifiedOutcome = classifyCreateOutcome(status);
   const outcome = classifiedOutcome === 'unknown'
     ? 'unknown'
     : suppliedOutcome ?? classifiedOutcome;
@@ -487,9 +487,6 @@ function toCreateError(
       : 'The run may or may not have been created server-side. Do not automatically start ' +
         'another run — list recent runs for this agent (or check the Nimble console) to ' +
         'reconcile before creating again.';
-  const status = nimbleError
-    ? safeErrorProperty(err, 'status')
-    : undefined;
   const recoveredRunId =
     context.allowErrorDetails && nimbleError
       ? safeCreateErrorRunId(err, context.agentId, context.apiKey)
@@ -505,10 +502,7 @@ function toCreateError(
       context.allowErrorDetails && nimbleError
         ? safeErrorMetadata(safeErrorProperty(err, 'runStatus'), context.apiKey)
         : undefined,
-    status:
-      nimbleError && typeof status === 'number'
-        ? status
-        : readStatus(err),
+    status,
     createOutcome: outcome,
     cause: context.allowErrorDetails
       ? sanitizeCause(
@@ -555,6 +549,9 @@ function resolveAgentContext(config: NimbleAgentToolConfig, factory: string): Ag
     // client. An ambient NIMBLE_API_KEY may describe a different client and
     // therefore cannot make unknown error details safe to expose.
     const scrubKey = config.apiKey;
+    if (scrubKey && agentId.includes(scrubKey)) {
+      throw new NimbleConfigError('Nimble agent id contains protected credential material.');
+    }
     return {
       client: config.client,
       agentId,
@@ -567,6 +564,9 @@ function resolveAgentContext(config: NimbleAgentToolConfig, factory: string): Ag
     throw new NimbleConfigError(
       `Missing Nimble API key: set NIMBLE_API_KEY or pass { apiKey } to ${factory}().`,
     );
+  }
+  if (agentId.includes(apiKey)) {
+    throw new NimbleConfigError('Nimble agent id contains protected credential material.');
   }
   const client = createNimbleClient(
     apiKey,
@@ -1063,7 +1063,21 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
           ? AbortSignal.any([signal, initialDeadlineSignal])
           : initialDeadlineSignal
         : signal;
-      let run = await getRun(initialSignal);
+      let run: NimbleAgentRawRun;
+      try {
+        run = await getRun(initialSignal);
+      } catch (err) {
+        if (initialDeadlineSignal?.aborted && !signal?.aborted) {
+          return {
+            ready: false,
+            runId: ids.runId,
+            agentId: ids.agentId,
+            status: 'unknown',
+            isActive: true,
+          };
+        }
+        throw err;
+      }
       assertKnownStatus(run, ids);
 
       if (wait && run.is_active) {

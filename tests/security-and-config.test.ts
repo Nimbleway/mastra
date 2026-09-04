@@ -11,7 +11,7 @@ import {
   nimbleAgentRunIdInputSchema,
   nimbleAgentStartRunInputSchema,
 } from '../src/schemas';
-import { NimbleAgentRunError } from '../src/errors';
+import { NimbleAgentRunError, NimbleConfigError } from '../src/errors';
 import {
   AGENT_ID,
   CTX,
@@ -51,6 +51,30 @@ describe('the API key stays server-only', () => {
       expect(String(err)).not.toContain(FAKE_KEY);
       expect(JSON.stringify(err)).not.toContain(FAKE_KEY);
       expect(inspect(err, { depth: 10 })).not.toContain(FAKE_KEY);
+      expect(get).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['start', 'status', 'result'] as const)(
+    'rejects a %s agent id containing the configured key before any request',
+    async (operation) => {
+      const create = vi.fn();
+      const get = vi.fn();
+      const config = {
+        agentId: `wsa_${FAKE_KEY}`,
+        apiKey: FAKE_KEY,
+        client: mockClient({ create, get }),
+      };
+      const pending = operation === 'start'
+        ? nimbleAgentStartRunTool(config).execute!({ task: 't' }, CTX)
+        : operation === 'status'
+          ? nimbleAgentRunStatusTool(config).execute!({ runId: RUN_ID }, CTX)
+          : nimbleAgentRunResultTool(config).execute!({ runId: RUN_ID }, CTX);
+      const err = await pending.catch((caught: unknown) => caught);
+      expect(err).toBeInstanceOf(NimbleConfigError);
+      expect(String(err)).not.toContain(FAKE_KEY);
+      expect(inspect(err, { depth: 10 })).not.toContain(FAKE_KEY);
+      expect(create).not.toHaveBeenCalled();
       expect(get).not.toHaveBeenCalled();
     },
   );
