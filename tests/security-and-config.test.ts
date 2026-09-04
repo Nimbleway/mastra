@@ -84,6 +84,26 @@ describe('the API key stays server-only', () => {
     expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
   });
 
+  it('detects a reflected credential without relying on JSON escaping', async () => {
+    const unusualKey = 'nk_test_"quoted"\\line\nnext';
+    const result = makeTextResult();
+    result.output.content = `reflected ${unusualKey}`;
+    const err = await nimbleAgentRunResultTool({
+      agentId: AGENT_ID,
+      apiKey: unusualKey,
+      client: mockClient({
+        get: async () => makeRun({ status: 'completed', is_active: false }),
+        result: async () => result,
+      }),
+    }).execute!({ runId: RUN_ID }, CTX).then(
+      () => { throw new Error('expected failure'); },
+      (error: unknown) => error as NimbleAgentRunError,
+    );
+
+    expect(err).toMatchObject({ reason: 'protocol', runId: RUN_ID, agentId: AGENT_ID });
+    expect(inspect(err, { depth: 20 })).not.toContain(unusualKey);
+  });
+
   it('is scrubbed from error messages that echo it (create and read paths)', async () => {
     const leakyError = () => new Error(`401 unauthorized for key ${FAKE_KEY}`);
     const createErr = await nimbleAgentStartRunTool({

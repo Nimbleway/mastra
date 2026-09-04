@@ -156,6 +156,7 @@ describe('run creation is one-shot', () => {
       agentId: AGENT_ID,
       createOutcome: 'unknown',
     });
+    expect(err.message).toContain(RUN_ID);
   });
 
   it('withholds an accepted run id when the response belongs to another agent', async () => {

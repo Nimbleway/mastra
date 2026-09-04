@@ -159,12 +159,24 @@ function safeErrorMetadata(value: unknown, apiKey: string | undefined): string |
   return apiKey && value.includes(apiKey) ? undefined : value;
 }
 
-/** Fail closed when a model-visible response contains the configured credential. */
-function containsCredential(value: unknown, apiKey: string | undefined): boolean {
+/** Inspect raw values so JSON escaping cannot hide a reflected credential. */
+function containsCredential(
+  value: unknown,
+  apiKey: string | undefined,
+  seen = new WeakSet<object>(),
+  depth = 0,
+): boolean {
   if (!apiKey) return false;
+  if (typeof value === 'string') return value.includes(apiKey);
+  if (value === null || typeof value !== 'object') return false;
+  // Cycles and unexpectedly deep/uninspectable response objects cannot be
+  // proven safe for model-visible output, so reject them.
+  if (seen.has(value) || depth > 20) return true;
+  seen.add(value);
   try {
-    const serialized = JSON.stringify(value);
-    return typeof serialized === 'string' && serialized.includes(apiKey);
+    return Object.entries(value).some(
+      ([key, nested]) => key.includes(apiKey) || containsCredential(nested, apiKey, seen, depth + 1),
+    );
   } catch {
     return true;
   }
@@ -424,7 +436,9 @@ function assertMatchingRunIds(
 function createProtocolError(agentId: string, runId?: string): NimbleAgentRunError {
   return new NimbleAgentRunError(
     'Nimble agent run creation returned a malformed payload after the request was accepted. ' +
-      'The run may have been created server-side; reconcile recent runs before creating again.',
+      (runId
+        ? `Run ${runId} may have been created server-side; resume it or reconcile recent runs before creating again.`
+        : 'The run may have been created server-side; reconcile recent runs before creating again.'),
     {
       reason: 'protocol',
       ...(runId ? { runId } : {}),
