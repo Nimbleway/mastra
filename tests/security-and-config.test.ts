@@ -136,6 +136,25 @@ describe('the API key stays server-only', () => {
     expect(output).toMatchObject({ ready: true, output: { type: 'json' } });
   });
 
+  it('rejects cyclic structured output with a typed protocol error', async () => {
+    const content: Record<string, unknown> = { value: 'safe' };
+    content.self = content;
+    const result = makeTextResult();
+    result.output = { type: 'json', content, trust: TRUST };
+    const err = await nimbleAgentRunResultTool({
+      agentId: AGENT_ID,
+      apiKey: FAKE_KEY,
+      client: mockClient({
+        get: async () => makeRun({ status: 'completed', is_active: false }),
+        result: async () => result,
+      }),
+    }).execute!({ runId: RUN_ID }, CTX).then(
+      () => { throw new Error('expected failure'); },
+      (error: unknown) => error as NimbleAgentRunError,
+    );
+    expect(err).toMatchObject({ reason: 'protocol', runId: RUN_ID, agentId: AGENT_ID });
+  });
+
   it('is scrubbed from error messages that echo it (create and read paths)', async () => {
     const leakyError = () => new Error(`401 unauthorized for key ${FAKE_KEY}`);
     const createErr = await nimbleAgentStartRunTool({

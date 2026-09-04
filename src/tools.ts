@@ -165,21 +165,30 @@ function containsCredential(
   apiKey: string | undefined,
 ): boolean {
   if (!apiKey) return false;
-  const pending: unknown[] = [value];
-  const seen = new WeakSet<object>();
+  const pending: Array<{ value: unknown; exit?: boolean }> = [{ value }];
+  const active = new WeakSet<object>();
+  const visited = new WeakSet<object>();
   while (pending.length > 0) {
-    const current = pending.pop();
+    const frame = pending.pop()!;
+    const current = frame.value;
     if (typeof current === 'string') {
       if (current.includes(apiKey)) return true;
       continue;
     }
     if (current === null || typeof current !== 'object') continue;
-    if (seen.has(current)) continue;
-    seen.add(current);
+    if (frame.exit) {
+      active.delete(current);
+      visited.add(current);
+      continue;
+    }
+    if (active.has(current)) return true;
+    if (visited.has(current)) continue;
+    active.add(current);
+    pending.push({ value: current, exit: true });
     try {
       for (const [key, nested] of Object.entries(current)) {
         if (key.includes(apiKey)) return true;
-        pending.push(nested);
+        pending.push({ value: nested });
       }
     } catch {
       return true;
