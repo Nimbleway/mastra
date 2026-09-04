@@ -807,6 +807,29 @@ describe('result tool', () => {
     });
   });
 
+  it('rejects a synchronous late status success before result retrieval', async () => {
+    let resultCalls = 0;
+    const client = mockClient({
+      get: async () => {
+        const deadline = performance.now() + 30;
+        while (performance.now() < deadline) { /* deliberately block */ }
+        return makeRun({ status: 'completed', is_active: false });
+      },
+      result: async () => {
+        resultCalls += 1;
+        return makeTextResult();
+      },
+    });
+    await expect(
+      nimbleAgentRunResultTool({
+        ...cfg,
+        client,
+        wait: { timeoutMs: 10, pollIntervalMs: 5 },
+      }).execute!({ runId: RUN_ID }, CTX),
+    ).resolves.toMatchObject({ ready: false, status: 'completed', isActive: false });
+    expect(resultCalls).toBe(0);
+  });
+
   it('bounds a noncooperative later status poll', async () => {
     let calls = 0;
     const client = mockClient({

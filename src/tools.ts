@@ -1087,6 +1087,8 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
       };
 
       const startedWaiting = wait ? performance.now() : undefined;
+      const waitExpired = () =>
+        wait !== undefined && performance.now() - startedWaiting! >= wait.timeoutMs;
       const initialDeadlineSignal = wait
         ? AbortSignal.timeout(wait.timeoutMs)
         : undefined;
@@ -1110,6 +1112,12 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
         throw err;
       }
       assertKnownStatus(run, ids);
+      if (waitExpired()) {
+        if (run.status === 'completed') return toCompletedNotReadyOutput(run);
+        if (run.status === 'queued' || run.status === 'running') {
+          return toPendingOutput(run, run.status);
+        }
+      }
 
       if (wait && run.is_active) {
         // Established before the initial status request, so timeoutMs bounds
@@ -1207,7 +1215,7 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
           allowErrorDetails,
         });
       }
-      if (wait && initialDeadlineSignal?.aborted) {
+      if (wait && (initialDeadlineSignal?.aborted || waitExpired())) {
         return toCompletedNotReadyOutput(run);
       }
 
