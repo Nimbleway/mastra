@@ -851,8 +851,11 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
           const elapsed = performance.now() - startedWaiting;
           const remaining = wait.timeoutMs - elapsed;
           if (remaining <= 0) break;
-          await sleep(Math.min(wait.pollIntervalMs, remaining), signal);
-          if (performance.now() - startedWaiting >= wait.timeoutMs) break;
+          if (remaining <= wait.pollIntervalMs) {
+            await sleep(remaining, signal);
+            break;
+          }
+          await sleep(wait.pollIntervalMs, signal);
           run = await getRun();
           assertKnownStatus(run, ids);
         }
