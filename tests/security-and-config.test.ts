@@ -126,6 +126,29 @@ describe('the API key stays server-only', () => {
     expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
   });
 
+  it.each([
+    ['symbol', Symbol(FAKE_KEY)],
+    ['function', Object.assign(() => undefined, { secret: FAKE_KEY })],
+    ['bigint', 1n],
+    ['undefined', undefined],
+  ])('rejects non-JSON %s values in structured output', async (_label, unsafe) => {
+    const result = makeTextResult();
+    result.output = { type: 'json', content: { unsafe }, trust: TRUST };
+    const err = await nimbleAgentRunResultTool({
+      agentId: AGENT_ID,
+      apiKey: FAKE_KEY,
+      client: mockClient({
+        get: async () => makeRun({ status: 'completed', is_active: false }),
+        result: async () => result,
+      }),
+    }).execute!({ runId: RUN_ID }, CTX).then(
+      () => { throw new Error('expected failure'); },
+      (error: unknown) => error as NimbleAgentRunError,
+    );
+    expect(err).toMatchObject({ reason: 'protocol', runId: RUN_ID, agentId: AGENT_ID });
+    expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
+  });
+
   it.each(['id', 'web_search_agent_id'] as const)(
     'rejects a successful status response with a throwing %s accessor',
     async (property) => {
@@ -399,6 +422,24 @@ describe('the API key stays server-only', () => {
       expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
     },
   );
+
+  it.each([
+    ['Map', new Map([['authorization', FAKE_KEY]])],
+    ['Set', new Set([FAKE_KEY])],
+    ['URL', new URL(`https://example.test/?token=${FAKE_KEY}`)],
+    ['RegExp', new RegExp(FAKE_KEY)],
+  ])('scrubs inspect-visible %s internal-slot causes', async (_label, nestedCause) => {
+    const hostile = new Error('request failed', { cause: nestedCause });
+    const err = await nimbleAgentStartRunTool({
+      agentId: AGENT_ID,
+      apiKey: FAKE_KEY,
+      client: mockClient({ create: async () => { throw hostile; } }),
+    }).execute!({ task: 't' }, CTX).then(
+      () => { throw new Error('expected failure'); },
+      (error: unknown) => error as NimbleAgentRunError,
+    );
+    expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
+  });
 
   it('keeps a clean cause untouched for full debug fidelity', async () => {
     const clean = new Error('plain network hiccup');

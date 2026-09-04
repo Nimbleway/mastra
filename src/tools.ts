@@ -145,6 +145,15 @@ function keyInErrorChain(
     } catch {
       return true;
     }
+  } else {
+    try {
+      const prototype = Object.getPrototypeOf(err);
+      if (!Array.isArray(err) && prototype !== Object.prototype && prototype !== null) {
+        return true;
+      }
+    } catch {
+      return true;
+    }
   }
   try {
     // Inspect every own property without invoking custom toJSON methods or
@@ -217,31 +226,50 @@ function containsCredential(
   value: unknown,
   apiKey: string | undefined,
 ): boolean {
-  if (!apiKey) return false;
   const pending: Array<{ value: unknown; exit?: boolean }> = [{ value }];
   const active = new WeakSet<object>();
   const visited = new WeakSet<object>();
   while (pending.length > 0) {
     const frame = pending.pop()!;
     const current = frame.value;
-    if (typeof current === 'string') {
-      if (current.includes(apiKey)) return true;
+    const currentType = typeof current;
+    if (currentType === 'string') {
+      if (apiKey && (current as string).includes(apiKey)) return true;
       continue;
     }
-    if (current === null || typeof current !== 'object') continue;
+    if (current === null || currentType === 'boolean') continue;
+    if (currentType === 'number') {
+      if (!Number.isFinite(current)) return true;
+      continue;
+    }
+    if (
+      currentType === 'undefined' ||
+      currentType === 'bigint' ||
+      currentType === 'symbol' ||
+      currentType === 'function'
+    ) {
+      return true;
+    }
+    if (currentType !== 'object') return true;
+    const objectValue = current as object;
     if (frame.exit) {
-      active.delete(current);
-      visited.add(current);
+      active.delete(objectValue);
+      visited.add(objectValue);
       continue;
     }
-    if (active.has(current)) return true;
-    if (visited.has(current)) continue;
-    active.add(current);
-    pending.push({ value: current, exit: true });
+    if (active.has(objectValue)) return true;
+    if (visited.has(objectValue)) continue;
+    active.add(objectValue);
+    pending.push({ value: objectValue, exit: true });
     try {
-      for (const key of Reflect.ownKeys(current)) {
-        if (String(key).includes(apiKey)) return true;
-        const descriptor = Object.getOwnPropertyDescriptor(current, key);
+      const prototype = Object.getPrototypeOf(objectValue);
+      if (!Array.isArray(objectValue) && prototype !== Object.prototype && prototype !== null) {
+        return true;
+      }
+      for (const key of Reflect.ownKeys(objectValue)) {
+        if (typeof key === 'symbol') return true;
+        if (apiKey && key.includes(apiKey)) return true;
+        const descriptor = Object.getOwnPropertyDescriptor(objectValue, key);
         if (!descriptor || 'get' in descriptor || 'set' in descriptor) return true;
         pending.push({ value: descriptor.value });
       }
