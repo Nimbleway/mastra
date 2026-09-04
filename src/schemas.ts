@@ -74,6 +74,10 @@ const sourceCategorySchema = z.enum([
   'aggregator',
   'other',
 ]);
+// Agent API intent values describe why a source was selected (for example,
+// "informational"), not the source's category. Keep this distinct and
+// forward-compatible with newly introduced intent values.
+const sourceIntentSchema = z.string();
 
 /** A source consulted while producing the answer. */
 export const nimbleAgentTrustSourceSchema = z
@@ -82,7 +86,7 @@ export const nimbleAgentTrustSourceSchema = z
     type: sourceTypeSchema,
     title: z.string().nullish(),
     source_category: sourceCategorySchema.nullish(),
-    source_intent: sourceCategorySchema.nullish(),
+    source_intent: sourceIntentSchema.nullish(),
     extract_template_name: z.string().nullish(),
   })
   .passthrough();
@@ -95,7 +99,7 @@ export const nimbleAgentTrustCitationSchema = z
     excerpts: z.array(z.string()).nullish(),
     source_type: sourceTypeSchema.nullish(),
     source_category: sourceCategorySchema.nullish(),
-    source_intent: sourceCategorySchema.nullish(),
+    source_intent: sourceIntentSchema.nullish(),
     extract_template_name: z.string().nullish(),
   })
   .passthrough();

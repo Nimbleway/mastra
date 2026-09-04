@@ -836,6 +836,26 @@ describe('the API key stays server-only', () => {
 });
 
 describe('trust metadata passthrough', () => {
+  it('preserves source intent independently from source category', () => {
+    const client = makeTextResult();
+    client.output.trust.sources[0]!.source_intent = 'informational';
+    client.output.trust.claims[0]!.citations[0]!.source_intent = 'navigational';
+
+    const parsed = nimbleAgentRunCompletedOutputSchema.parse({
+      ready: true,
+      agentId: AGENT_ID,
+      runId: RUN_ID,
+      status: 'completed',
+      effort: 'medium',
+      createdAt: '2026-08-04T10:00:00Z',
+      output: { type: 'text' as const, text: 'x', trust: client.output.trust },
+    });
+
+    expect(parsed.output.trust.sources[0]?.source_intent).toBe('informational');
+    expect(parsed.output.trust.claims[0]?.citations[0]?.source_intent).toBe('navigational');
+    expect(parsed.output.trust.sources[0]?.source_category).toBe('official');
+  });
+
   it('output schema preserves unknown future trust fields (passthrough, no stripping)', () => {
     const client = makeTextResult();
     const completed = {
