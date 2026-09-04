@@ -11,7 +11,7 @@ import {
   nimbleAgentRunIdInputSchema,
   nimbleAgentStartRunInputSchema,
 } from '../src/schemas';
-import type { NimbleAgentRunError } from '../src/errors';
+import { NimbleAgentRunError } from '../src/errors';
 import {
   AGENT_ID,
   CTX,
@@ -276,6 +276,27 @@ describe('the API key stays server-only', () => {
     expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
   });
 
+  it.each(['message', 'cause', 'status'] as const)(
+    'does not propagate a credential-bearing throwing %s accessor',
+    async (property) => {
+      const hostile = new NimbleAgentRunError('request failed', {
+        reason: 'request', createOutcome: 'unknown',
+      });
+      Object.defineProperty(hostile, property, {
+        get() { throw new Error(`${property} exposed ${FAKE_KEY}`); },
+      });
+      const err = await nimbleAgentStartRunTool({
+        agentId: AGENT_ID, apiKey: FAKE_KEY,
+        client: mockClient({ create: async () => { throw hostile; } }),
+      }).execute!({ task: 't' }, CTX).then(
+        () => { throw new Error('expected failure'); },
+        (e: unknown) => e as NimbleAgentRunError,
+      );
+      expect(err).toBeInstanceOf(Error);
+      expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
+    },
+  );
+
   it('is scrubbed when Error.cause is the primitive key value', async () => {
     const leaky = new Error('request failed', { cause: FAKE_KEY });
     const err = await nimbleAgentStartRunTool({
@@ -481,6 +502,24 @@ describe('the API key stays server-only', () => {
     const err = await nimbleAgentStartRunTool({
       agentId: AGENT_ID, apiKey: FAKE_KEY,
       client: mockClient({ create: async () => { throw unsafeAgent; } }),
+    }).execute!({ task: 't' }, CTX).then(
+      () => { throw new Error('expected failure'); },
+      (e: unknown) => e as NimbleAgentRunError,
+    );
+    expect(err.runId).toBeUndefined();
+    expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
+  });
+
+  it('drops a recovered run id when the agentId accessor throws', async () => {
+    const hostile = new NimbleAgentRunError('create failed', {
+      reason: 'request', runId: RUN_ID, createOutcome: 'unknown',
+    });
+    Object.defineProperty(hostile, 'agentId', {
+      get() { throw new Error(`agent metadata exposed ${FAKE_KEY}`); },
+    });
+    const err = await nimbleAgentStartRunTool({
+      agentId: AGENT_ID, apiKey: FAKE_KEY,
+      client: mockClient({ create: async () => { throw hostile; } }),
     }).execute!({ task: 't' }, CTX).then(
       () => { throw new Error('expected failure'); },
       (e: unknown) => e as NimbleAgentRunError,

@@ -66,10 +66,12 @@ function capEffort(requested: NimbleAgentEffort, cap: NimbleAgentEffort): Nimble
 }
 
 function readStatus(err: unknown): number | undefined {
-  if (typeof err === 'object' && err !== null && 'status' in err) {
-    const status = (err as { status?: unknown }).status;
-    return typeof status === 'number' ? status : undefined;
-  }
+  try {
+    if (typeof err === 'object' && err !== null && 'status' in err) {
+      const status = (err as { status?: unknown }).status;
+      return typeof status === 'number' ? status : undefined;
+    }
+  } catch { /* untrusted runtime accessor */ }
   return undefined;
 }
 
@@ -173,6 +175,26 @@ function safeErrorMetadata(value: unknown, apiKey: string | undefined): string |
   return apiKey && value.includes(apiKey) ? undefined : value;
 }
 
+/** Read runtime error properties without trusting user-defined accessors. */
+function safeErrorProperty(err: unknown, key: string): unknown {
+  if ((typeof err !== 'object' && typeof err !== 'function') || err === null) return undefined;
+  try {
+    return (err as Record<string, unknown>)[key];
+  } catch {
+    return undefined;
+  }
+}
+
+function safeErrorMessage(err: unknown, apiKey: string | undefined): string {
+  const message = safeErrorProperty(err, 'message');
+  if (typeof message === 'string') return scrub(message, apiKey);
+  try {
+    return scrub(String(err), apiKey);
+  } catch {
+    return 'Untrusted error details withheld';
+  }
+}
+
 /** Inspect raw values so JSON escaping cannot hide a reflected credential. */
 function containsCredential(
   value: unknown,
@@ -226,8 +248,13 @@ function safeCreateErrorRunId(
   agentId: string,
   apiKey: string | undefined,
 ): string | undefined {
-  const runId = safeErrorMetadata(err.runId, apiKey);
-  const returnedAgentId = err.agentId;
+  const runId = safeErrorMetadata(safeErrorProperty(err, 'runId'), apiKey);
+  let returnedAgentId: unknown;
+  try {
+    returnedAgentId = err.agentId;
+  } catch {
+    return undefined;
+  }
   return runId && /^task_run_[A-Za-z0-9_-]+$/.test(runId) &&
     (returnedAgentId === undefined ||
       (typeof returnedAgentId === 'string' &&
@@ -248,26 +275,29 @@ function toAgentError(
 ): NimbleAgentRunError {
   if (err instanceof NimbleAgentRunError) {
     const runRef = context.runId ? ` (run ${context.runId})` : '';
+    const status = safeErrorProperty(err, 'status');
     const message = context.allowErrorDetails
-      ? scrub(err.message, context.apiKey)
+      ? safeErrorMessage(err, context.apiKey)
       : `Nimble agent ${context.verb} failed${runRef}: details withheld because the injected client credential was not provided for redaction`;
     return new NimbleAgentRunError(message, {
-      reason: safeErrorReason(err.reason),
+      reason: safeErrorReason(safeErrorProperty(err, 'reason')),
       // Requested identifiers are trusted and authoritative on read paths.
       // Never copy model-visible metadata from an injected error when its
       // credential is unavailable for redaction.
       runId: context.runId,
       agentId: context.agentId,
       runStatus: context.allowErrorDetails
-        ? safeErrorMetadata(err.runStatus, context.apiKey)
+        ? safeErrorMetadata(safeErrorProperty(err, 'runStatus'), context.apiKey)
         : undefined,
-      status: typeof err.status === 'number' ? err.status : undefined,
-      createOutcome: safeCreateOutcome(err.createOutcome),
-      cause: context.allowErrorDetails ? sanitizeCause(err.cause, context.apiKey) : undefined,
+      status: typeof status === 'number' ? status : undefined,
+      createOutcome: safeCreateOutcome(safeErrorProperty(err, 'createOutcome')),
+      cause: context.allowErrorDetails
+        ? sanitizeCause(safeErrorProperty(err, 'cause'), context.apiKey)
+        : undefined,
     });
   }
   const message = context.allowErrorDetails
-    ? scrub(err instanceof Error ? err.message : String(err), context.apiKey)
+    ? safeErrorMessage(err, context.apiKey)
     : 'details withheld because the injected client credential was not provided for redaction';
   const runRef = context.runId ? ` (run ${context.runId})` : '';
   return new NimbleAgentRunError(`Nimble agent ${context.verb} failed${runRef}: ${message}`, {
@@ -304,12 +334,12 @@ function toCreateError(
   err: unknown,
   context: { agentId: string; apiKey?: string; allowErrorDetails: boolean },
 ): NimbleAgentRunError {
-  const outcome =
-    err instanceof NimbleAgentRunError && safeCreateOutcome(err.createOutcome)
-      ? safeCreateOutcome(err.createOutcome)!
-      : classifyCreateOutcome(err);
+  const suppliedOutcome = err instanceof NimbleAgentRunError
+    ? safeCreateOutcome(safeErrorProperty(err, 'createOutcome'))
+    : undefined;
+  const outcome = suppliedOutcome ?? classifyCreateOutcome(err);
   const message = context.allowErrorDetails
-    ? scrub(err instanceof Error ? err.message : String(err), context.apiKey)
+    ? safeErrorMessage(err, context.apiKey)
     : 'request failed; details withheld because the injected client credential was not provided for redaction';
   const guidance =
     outcome === 'not-created'
@@ -317,8 +347,13 @@ function toCreateError(
       : 'The run may or may not have been created server-side. Do not automatically start ' +
         'another run — list recent runs for this agent (or check the Nimble console) to ' +
         'reconcile before creating again.';
+  const status = err instanceof NimbleAgentRunError
+    ? safeErrorProperty(err, 'status')
+    : undefined;
   return new NimbleAgentRunError(`Nimble agent run creation failed: ${message} ${guidance}`, {
-    reason: err instanceof NimbleAgentRunError ? safeErrorReason(err.reason) : 'request',
+    reason: err instanceof NimbleAgentRunError
+      ? safeErrorReason(safeErrorProperty(err, 'reason'))
+      : 'request',
     runId:
       context.allowErrorDetails && err instanceof NimbleAgentRunError
         ? safeCreateErrorRunId(err, context.agentId, context.apiKey)
@@ -326,15 +361,18 @@ function toCreateError(
     agentId: context.agentId,
     runStatus:
       context.allowErrorDetails && err instanceof NimbleAgentRunError
-        ? safeErrorMetadata(err.runStatus, context.apiKey)
+        ? safeErrorMetadata(safeErrorProperty(err, 'runStatus'), context.apiKey)
         : undefined,
     status:
-      err instanceof NimbleAgentRunError && typeof err.status === 'number'
-        ? err.status
+      err instanceof NimbleAgentRunError && typeof status === 'number'
+        ? status
         : readStatus(err),
     createOutcome: outcome,
     cause: context.allowErrorDetails
-      ? sanitizeCause(err instanceof NimbleAgentRunError ? err.cause : err, context.apiKey)
+      ? sanitizeCause(
+          err instanceof NimbleAgentRunError ? safeErrorProperty(err, 'cause') : err,
+          context.apiKey,
+        )
       : undefined,
   });
 }
