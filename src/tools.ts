@@ -159,6 +159,17 @@ function safeErrorMetadata(value: unknown, apiKey: string | undefined): string |
   return apiKey && value.includes(apiKey) ? undefined : value;
 }
 
+/** Fail closed when a model-visible response contains the configured credential. */
+function containsCredential(value: unknown, apiKey: string | undefined): boolean {
+  if (!apiKey) return false;
+  try {
+    const serialized = JSON.stringify(value);
+    return typeof serialized === 'string' && serialized.includes(apiKey);
+  } catch {
+    return true;
+  }
+}
+
 function safeErrorReason(value: unknown): NimbleAgentRunErrorReason {
   return value === 'failed' || value === 'cancelled' || value === 'protocol' || value === 'request'
     ? value
@@ -423,6 +434,16 @@ function createProtocolError(agentId: string, runId?: string): NimbleAgentRunErr
   );
 }
 
+function safeCreatedRunId(run: unknown, apiKey: string | undefined): string | undefined {
+  if (typeof run !== 'object' || run === null) return undefined;
+  const id = (run as { id?: unknown }).id;
+  return typeof id === 'string' &&
+    /^task_run_[A-Za-z0-9_-]+$/.test(id) &&
+    !containsCredential(id, apiKey)
+    ? id
+    : undefined;
+}
+
 function assertCreatedRun(
   run: NimbleAgentRawRun,
   agentId: string,
@@ -433,7 +454,10 @@ function assertCreatedRun(
     run.web_search_agent_id !== agentId ||
     !/^task_run_[A-Za-z0-9_-]+$/.test(run.id)
   ) {
-    throw createProtocolError(agentId);
+    // The POST was accepted. Preserve a separately validated run handle even
+    // when another response field is malformed, so callers can reconcile or
+    // resume instead of risking a second billed create.
+    throw createProtocolError(agentId, safeCreatedRunId(run, apiKey));
   }
 }
 
@@ -817,6 +841,12 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
       }
 
       if (typeof result !== 'object' || result === null) {
+        throw protocolError(ids);
+      }
+      // A successful result is model-visible. Reject the complete envelope if
+      // a backend/proxy reflects the configured server-only credential in the
+      // answer, structured JSON, trust metadata, or any future field.
+      if (containsCredential(result, apiKey)) {
         throw protocolError(ids);
       }
       if (!('output' in result)) {

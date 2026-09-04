@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { nimbleAgentStartRunTool, nimbleAgentRunStatusTool } from '../src/tools';
 import { NimbleAgentRunError } from '../src/errors';
-import { AGENT_ID, CTX, FAKE_KEY, jsonResponse, makeRun } from './fixtures';
+import { AGENT_ID, CTX, FAKE_KEY, RUN_ID, jsonResponse, makeRun } from './fixtures';
 
 /**
  * Attempt-count contract, proven against the REAL `@nimble-way/nimble-js`
@@ -111,7 +111,7 @@ describe('run creation is one-shot', () => {
       agentId: AGENT_ID,
       createOutcome: 'unknown',
     });
-    expect(err.runId).toBeUndefined();
+    expect(err.runId).toBe(RUN_ID);
     expect(err.runStatus).toBeUndefined();
     expect(err.message).not.toContain(leakyStatus);
     expect(err.message).not.toContain(FAKE_KEY);
@@ -136,6 +136,26 @@ describe('run creation is one-shot', () => {
     });
     expect(err.runId).toBeUndefined();
     expect(JSON.stringify(err)).not.toContain(FAKE_KEY);
+  });
+
+  it('preserves a safe accepted run id when another create field is malformed', async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(200, makeRun({ effort: 'unexpected' as never })),
+    );
+    const err = await startToolWithFetch(fetchMock as unknown as typeof fetch)
+      .execute!({ task: 'research x' }, CTX)
+      .then(
+        () => { throw new Error('expected failure'); },
+        (error: unknown) => error as NimbleAgentRunError,
+      );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(err).toMatchObject({
+      reason: 'protocol',
+      runId: RUN_ID,
+      agentId: AGENT_ID,
+      createOutcome: 'unknown',
+    });
   });
 });
 

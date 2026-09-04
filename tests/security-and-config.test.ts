@@ -17,6 +17,7 @@ import {
   CTX,
   FAKE_KEY,
   RUN_ID,
+  TRUST,
   jsonResponse,
   makeRun,
   makeTextResult,
@@ -46,6 +47,41 @@ describe('the API key stays server-only', () => {
       client,
     }).execute!({ runId: RUN_ID }, CTX);
     expect(JSON.stringify(out)).not.toContain(FAKE_KEY);
+  });
+
+  it.each([
+    ['text answer', { type: 'text', content: `answer ${FAKE_KEY}`, trust: TRUST }],
+    ['nested JSON answer', { type: 'json', content: { nested: { value: FAKE_KEY } }, trust: TRUST }],
+    [
+      'trust metadata',
+      {
+        type: 'text',
+        content: 'safe answer',
+        trust: { ...TRUST, reasoning: `reflected ${FAKE_KEY}` },
+      },
+    ],
+  ])('rejects a credential-bearing successful %s', async (_label, output) => {
+    const result = makeTextResult();
+    result.output = output as typeof result.output;
+    const err = await nimbleAgentRunResultTool({
+      agentId: AGENT_ID,
+      apiKey: FAKE_KEY,
+      client: mockClient({
+        get: async () => makeRun({ status: 'completed', is_active: false }),
+        result: async () => result,
+      }),
+    }).execute!({ runId: RUN_ID }, CTX).then(
+      () => { throw new Error('expected failure'); },
+      (error: unknown) => error as NimbleAgentRunError,
+    );
+
+    expect(err).toMatchObject({
+      reason: 'protocol',
+      runId: RUN_ID,
+      agentId: AGENT_ID,
+      runStatus: undefined,
+    });
+    expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
   });
 
   it('is scrubbed from error messages that echo it (create and read paths)', async () => {
