@@ -830,6 +830,28 @@ describe('result tool', () => {
     expect(resultCalls).toBe(0);
   });
 
+  it('maps a synchronous late initial-status rejection to unknown', async () => {
+    const client = mockClient({
+      get: async () => {
+        const deadline = performance.now() + 30;
+        while (performance.now() < deadline) { /* deliberately block */ }
+        throw new Error('late status failure');
+      },
+    });
+    await expect(
+      nimbleAgentRunResultTool({
+        ...cfg,
+        client,
+        wait: { timeoutMs: 10, pollIntervalMs: 5 },
+      }).execute!({ runId: RUN_ID }, CTX),
+    ).resolves.toEqual({
+      ready: false,
+      runId: RUN_ID,
+      agentId: AGENT_ID,
+      status: 'unknown',
+    });
+  });
+
   it('bounds a noncooperative later status poll', async () => {
     let calls = 0;
     const client = mockClient({
@@ -844,6 +866,27 @@ describe('result tool', () => {
         ...cfg,
         client,
         wait: { timeoutMs: 150, pollIntervalMs: 10 },
+      }).execute!({ runId: RUN_ID }, CTX),
+    ).resolves.toMatchObject({ ready: false, status: 'running', isActive: true });
+    expect(calls).toBe(2);
+  });
+
+  it('maps a synchronous late poll rejection to the last status snapshot', async () => {
+    let calls = 0;
+    const client = mockClient({
+      get: async () => {
+        calls += 1;
+        if (calls === 1) return makeRun({ status: 'running', is_active: true });
+        const deadline = performance.now() + 300;
+        while (performance.now() < deadline) { /* deliberately block */ }
+        throw new Error('late poll failure');
+      },
+    });
+    await expect(
+      nimbleAgentRunResultTool({
+        ...cfg,
+        client,
+        wait: { timeoutMs: 250, pollIntervalMs: 10 },
       }).execute!({ runId: RUN_ID }, CTX),
     ).resolves.toMatchObject({ ready: false, status: 'running', isActive: true });
     expect(calls).toBe(2);

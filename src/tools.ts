@@ -1101,7 +1101,7 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
       try {
         run = await getRun(initialSignal);
       } catch (err) {
-        if (initialDeadlineSignal?.aborted && !signal?.aborted) {
+        if ((initialDeadlineSignal?.aborted || waitExpired()) && !signal?.aborted) {
           return {
             ready: false,
             runId: ids.runId,
@@ -1142,7 +1142,7 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
           try {
             fetched = await getRun(requestSignal);
           } catch (err) {
-            if (deadlineSignal.aborted && !signal?.aborted) break;
+            if ((deadlineSignal.aborted || waitExpired()) && !signal?.aborted) break;
             throw err;
           }
           if (performance.now() - waitStartedAt >= wait.timeoutMs) break;
