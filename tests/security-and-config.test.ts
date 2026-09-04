@@ -320,6 +320,20 @@ describe('the API key stays server-only', () => {
     expect(inspect(err.cause, { depth: 5 })).not.toContain(FAKE_KEY);
   });
 
+  it('scrubs a credential-bearing name even when the cached stack is clean', async () => {
+    const hostile = new Error('plain failure');
+    void hostile.stack;
+    hostile.name = `ApiError-${FAKE_KEY}`;
+    const err = await nimbleAgentStartRunTool({
+      agentId: AGENT_ID, apiKey: FAKE_KEY,
+      client: mockClient({ create: async () => { throw hostile; } }),
+    }).execute!({ task: 't' }, CTX).then(
+      () => { throw new Error('expected failure'); },
+      (e: unknown) => e as NimbleAgentRunError,
+    );
+    expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
+  });
+
   it('keeps a clean cause untouched for full debug fidelity', async () => {
     const clean = new Error('plain network hiccup');
     const err = await nimbleAgentStartRunTool({

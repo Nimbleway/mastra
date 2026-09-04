@@ -551,4 +551,28 @@ describe('result tool', () => {
     expect(out).toMatchObject({ ready: false, status: 'running' });
     expect(calls).toBe(2);
   });
+
+  it('bounds an in-flight status poll by the remaining wait timeout', async () => {
+    let calls = 0;
+    const client = mockClient({
+      get: async (_runId, _query, options) => {
+        calls += 1;
+        if (calls === 1) return makeRun({ status: 'running' });
+        return await new Promise((_, reject) => {
+          options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), {
+            once: true,
+          });
+        });
+      },
+    });
+    const started = performance.now();
+    const out = await nimbleAgentRunResultTool({
+      ...cfg,
+      client,
+      wait: { timeoutMs: 175, pollIntervalMs: 100 },
+    }).execute!({ runId: RUN_ID }, CTX);
+    expect(out).toMatchObject({ ready: false, status: 'running' });
+    expect(calls).toBe(2);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
 });

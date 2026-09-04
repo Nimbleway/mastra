@@ -129,6 +129,7 @@ function keyInErrorChain(err: unknown, apiKey: string, depth = 0): boolean {
   if (depth > 4) return true;
   const candidate = err as Error & { cause?: unknown };
   try {
+    if (typeof candidate.name === 'string' && candidate.name.includes(apiKey)) return true;
     if (typeof candidate.message === 'string' && candidate.message.includes(apiKey)) return true;
     if (typeof candidate.stack === 'string' && candidate.stack.includes(apiKey)) return true;
   } catch {
@@ -861,12 +862,12 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
       const signal = context?.abortSignal;
       const ids = { runId: input.runId, agentId };
 
-      const getRun = async (): Promise<NimbleAgentRawRun> => {
+      const getRun = async (requestSignal = signal): Promise<NimbleAgentRawRun> => {
         try {
           const fetched = await client.agents.runs.get(
             input.runId,
             { agent_id: agentId },
-            requestOptions(signal),
+            requestOptions(requestSignal),
           );
           assertMatchingRunIds(fetched, ids, apiKey);
           return fetched;
@@ -894,7 +895,21 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
             break;
           }
           await sleep(wait.pollIntervalMs, signal);
-          run = await getRun();
+          const remainingAfterSleep = wait.timeoutMs - (performance.now() - startedWaiting);
+          if (remainingAfterSleep <= 0) break;
+          const deadlineSignal = AbortSignal.timeout(Math.max(1, Math.ceil(remainingAfterSleep)));
+          const requestSignal = signal
+            ? AbortSignal.any([signal, deadlineSignal])
+            : deadlineSignal;
+          let fetched: NimbleAgentRawRun;
+          try {
+            fetched = await getRun(requestSignal);
+          } catch (err) {
+            if (deadlineSignal.aborted && !signal?.aborted) break;
+            throw err;
+          }
+          if (performance.now() - startedWaiting >= wait.timeoutMs) break;
+          run = fetched;
           assertKnownStatus(run, ids);
         }
       }
