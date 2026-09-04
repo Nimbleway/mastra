@@ -236,13 +236,32 @@ function containsCredential(
     active.add(current);
     pending.push({ value: current, exit: true });
     try {
-      for (const [key, nested] of Object.entries(current)) {
-        if (key.includes(apiKey)) return true;
-        pending.push({ value: nested });
+      for (const key of Reflect.ownKeys(current)) {
+        if (String(key).includes(apiKey)) return true;
+        const descriptor = Object.getOwnPropertyDescriptor(current, key);
+        if (!descriptor || 'get' in descriptor || 'set' in descriptor) return true;
+        pending.push({ value: descriptor.value });
       }
     } catch {
       return true;
     }
+  }
+  return false;
+}
+
+/** Successful SDK payloads must be inert data, never executable accessors. */
+function hasUnsafeAccessors(value: unknown, seen = new WeakSet<object>()): boolean {
+  if (value === null || typeof value !== 'object') return false;
+  if (seen.has(value)) return false;
+  seen.add(value);
+  try {
+    for (const key of Reflect.ownKeys(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || 'get' in descriptor || 'set' in descriptor) return true;
+      if (hasUnsafeAccessors(descriptor.value, seen)) return true;
+    }
+  } catch {
+    return true;
   }
   return false;
 }
@@ -520,6 +539,7 @@ function assertMatchingRunIds(
   if (typeof run !== 'object' || run === null) {
     throw protocolError(ids);
   }
+  if (hasUnsafeAccessors(run)) throw protocolError(ids);
   const candidate = run as Partial<NimbleAgentRawRun>;
   if (candidate.id !== ids.runId || candidate.web_search_agent_id !== ids.agentId) {
     throw new NimbleAgentRunError(

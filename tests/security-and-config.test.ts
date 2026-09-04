@@ -104,6 +104,48 @@ describe('the API key stays server-only', () => {
     expect(inspect(err, { depth: 20 })).not.toContain(unusualKey);
   });
 
+  it('rejects credential text stored under a symbol-keyed result field', async () => {
+    const result = makeTextResult();
+    result.output = {
+      type: 'json',
+      content: { safe: true, [Symbol('private')]: FAKE_KEY },
+      trust: TRUST,
+    };
+    const err = await nimbleAgentRunResultTool({
+      agentId: AGENT_ID,
+      apiKey: FAKE_KEY,
+      client: mockClient({
+        get: async () => makeRun({ status: 'completed', is_active: false }),
+        result: async () => result,
+      }),
+    }).execute!({ runId: RUN_ID }, CTX).then(
+      () => { throw new Error('expected failure'); },
+      (error: unknown) => error as NimbleAgentRunError,
+    );
+    expect(err).toMatchObject({ reason: 'protocol', runId: RUN_ID, agentId: AGENT_ID });
+    expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
+  });
+
+  it.each(['id', 'web_search_agent_id'] as const)(
+    'rejects a successful status response with a throwing %s accessor',
+    async (property) => {
+      const run = makeRun();
+      Object.defineProperty(run, property, {
+        get() { throw new Error(`${property} exposed ${FAKE_KEY}`); },
+      });
+      const err = await nimbleAgentRunStatusTool({
+        agentId: AGENT_ID,
+        apiKey: FAKE_KEY,
+        client: mockClient({ get: async () => run }),
+      }).execute!({ runId: RUN_ID }, CTX).then(
+        () => { throw new Error('expected failure'); },
+        (error: unknown) => error as NimbleAgentRunError,
+      );
+      expect(err).toMatchObject({ reason: 'protocol', runId: RUN_ID, agentId: AGENT_ID });
+      expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
+    },
+  );
+
   it('accepts deeply nested structured output when it contains no credential', async () => {
     let content: Record<string, unknown> = { value: 'safe' };
     for (let depth = 0; depth < 50; depth += 1) content = { nested: content };
