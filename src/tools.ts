@@ -1173,6 +1173,20 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
         });
       }
 
+      // Enforce cancellation independently of client settlement behavior. An
+      // injected client may ignore the signal and resolve after it fires.
+      if (signal?.aborted) {
+        throw toAgentError(signal.reason, {
+          verb: 'result fetch',
+          ...ids,
+          apiKey,
+          allowErrorDetails,
+        });
+      }
+      if (wait && initialDeadlineSignal?.aborted) {
+        return toCompletedNotReadyOutput(run);
+      }
+
       const resultSnapshot = snapshotPlainData(result);
       if (!resultSnapshot.ok || typeof resultSnapshot.value !== 'object' || resultSnapshot.value === null) {
         throw protocolError(ids);

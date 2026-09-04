@@ -816,6 +816,45 @@ describe('result tool', () => {
     expect(performance.now() - started).toBeLessThan(500);
   });
 
+  it('enforces the final deadline when an injected client resolves after abort', async () => {
+    const client = mockClient({
+      get: async () => makeRun({ status: 'completed', is_active: false }),
+      result: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        return makeTextResult();
+      },
+    });
+    await expect(
+      nimbleAgentRunResultTool({
+        ...cfg,
+        client,
+        wait: { timeoutMs: 20, pollIntervalMs: 10 },
+      }).execute!({ runId: RUN_ID }, CTX),
+    ).resolves.toMatchObject({
+      ready: false,
+      status: 'completed',
+      isActive: false,
+    });
+  });
+
+  it('preserves caller cancellation when an injected client resolves after abort', async () => {
+    const controller = new AbortController();
+    const client = mockClient({
+      get: async () => makeRun({ status: 'completed', is_active: false }),
+      result: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        return makeTextResult();
+      },
+    });
+    const pending = nimbleAgentRunResultTool({
+      ...cfg,
+      client,
+      wait: { timeoutMs: 5_000, pollIntervalMs: 100 },
+    }).execute!({ runId: RUN_ID }, { abortSignal: controller.signal } as never);
+    setTimeout(() => controller.abort(new Error('caller cancelled')), 10);
+    await expect(pending).rejects.toBeInstanceOf(NimbleAgentRunError);
+  });
+
   it.each(['initial status', 'final result'] as const)(
     'preserves caller cancellation as an error during %s',
     async (phase) => {
