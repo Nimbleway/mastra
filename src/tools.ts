@@ -1090,7 +1090,13 @@ export function nimbleAgentRunStatusTool(config: NimbleAgentToolConfig = {}) {
           allowErrorDetails,
         });
       }
-      run = snapshotRun(run, { runId: input.runId, agentId }, apiKey);
+      try {
+        run = snapshotRun(run, { runId: input.runId, agentId }, apiKey);
+      } catch (err) {
+        throw toAgentError(signal?.aborted ? signal.reason : err, {
+          verb: 'status check', runId: input.runId, agentId, apiKey, allowErrorDetails,
+        });
+      }
       if (signal?.aborted) {
         throw toAgentError(signal.reason, {
           verb: 'status check', runId: input.runId, agentId, apiKey, allowErrorDetails,
@@ -1151,7 +1157,7 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
           if (requestSignal?.aborted) throw abortReason(requestSignal);
           return snapshot;
         } catch (err) {
-          throw toAgentError(err, {
+          throw toAgentError(requestSignal?.aborted ? requestSignal.reason : err, {
             verb: 'status check',
             ...ids,
             apiKey,
