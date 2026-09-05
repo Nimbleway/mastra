@@ -633,6 +633,25 @@ describe('result tool', () => {
     expect(err.message.length).toBeLessThan(300);
   });
 
+  it('keeps repeated short-key redaction within the final detail cap', async () => {
+    const err = await nimbleAgentRunResultTool({
+      agentId: AGENT_ID,
+      apiKey: 'x',
+      client: mockClient({
+        get: async () => makeRun({
+          status: 'failed',
+          is_active: false,
+          error: { message: 'x'.repeat(2_000_000), ref_id: RUN_ID },
+        }),
+      }),
+    }).execute!({ runId: RUN_ID }, CTX).catch(
+      (caught: unknown) => caught as NimbleAgentRunError,
+    ) as NimbleAgentRunError;
+    expect(err.message).toContain('[redacted]');
+    expect(err.message).toContain('[truncated]');
+    expect(err.message.length).toBeLessThan(4_300);
+  });
+
   it.each(['failed', 'cancelled'] as const)(
     'returns authoritative %s/not-ready when large terminal error formatting reaches the deadline',
     async (status) => {

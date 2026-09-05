@@ -127,6 +127,27 @@ function scrub(text: string, apiKey: string | undefined): string {
 }
 
 const MAX_TERMINAL_ERROR_DETAIL_LENGTH = 4_096;
+const REDACTED = '[redacted]';
+
+function redactTerminalWindow(text: string, apiKey: string): string {
+  let output = '';
+  let cursor = 0;
+  while (cursor < text.length && output.length < MAX_TERMINAL_ERROR_DETAIL_LENGTH) {
+    const match = text.indexOf(apiKey, cursor);
+    if (match < 0 || match >= MAX_TERMINAL_ERROR_DETAIL_LENGTH) {
+      output += text.slice(
+        cursor,
+        cursor + MAX_TERMINAL_ERROR_DETAIL_LENGTH - output.length,
+      );
+      break;
+    }
+    const plainRoom = MAX_TERMINAL_ERROR_DETAIL_LENGTH - output.length - REDACTED.length;
+    output += text.slice(cursor, Math.min(match, cursor + Math.max(0, plainRoom)));
+    output += REDACTED;
+    cursor = match + apiKey.length;
+  }
+  return output.slice(0, MAX_TERMINAL_ERROR_DETAIL_LENGTH);
+}
 
 /**
  * Bound work on untrusted terminal messages before scrubbing/formatting them.
@@ -142,14 +163,7 @@ function terminalErrorDetail(text: string, apiKey: string | undefined): string {
   const visible = text.slice(0, MAX_TERMINAL_ERROR_DETAIL_LENGTH);
   if (!apiKey) return `${visible}… [truncated]`;
   const probe = text.slice(0, MAX_TERMINAL_ERROR_DETAIL_LENGTH + apiKey.length);
-  const crossingStart = probe.indexOf(
-    apiKey,
-    Math.max(0, MAX_TERMINAL_ERROR_DETAIL_LENGTH - apiKey.length + 1),
-  );
-  const safeVisible = crossingStart >= 0 && crossingStart < MAX_TERMINAL_ERROR_DETAIL_LENGTH
-    ? `${scrub(text.slice(0, crossingStart), apiKey)}[redacted]`
-    : scrub(visible, apiKey);
-  return `${safeVisible}… [truncated]`;
+  return `${redactTerminalWindow(probe, apiKey)}… [truncated]`;
 }
 
 function isErrorObject(value: unknown): value is Error {
