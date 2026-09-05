@@ -545,6 +545,9 @@ function resolveAgentContext(config: NimbleAgentToolConfig, factory: string): Ag
         'Create an agent instance once via the Nimble console or POST /v2/agents.',
     );
   }
+  if (!/^wsa_[A-Za-z0-9_-]+$/.test(agentId)) {
+    throw new NimbleConfigError('Invalid Nimble agent id: expected a wsa_ identifier.');
+  }
   if (config.client) {
     // Only an explicitly paired key can be assumed to belong to an injected
     // client. An ambient NIMBLE_API_KEY may describe a different client and

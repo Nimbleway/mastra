@@ -1036,6 +1036,21 @@ describe('createNimbleAgentTools (convenience factory)', () => {
     vi.unstubAllEnvs();
   });
 
+  it.each(['not-an-agent', FAKE_KEY])('rejects unsafe agent id %s before any request', async (agentId) => {
+    const fetchMock = vi.fn(async () => jsonResponse(500, {}));
+    const err = await nimbleAgentStartRunTool({
+      agentId,
+      apiKey: agentId === FAKE_KEY ? AGENT_ID : FAKE_KEY,
+      clientOptions: { fetch: fetchMock as unknown as typeof fetch },
+    }).execute!({ task: 't' }, CTX).catch((error: unknown) => error);
+    expect(err).toBeInstanceOf(NimbleConfigError);
+    expect(fetchMock).not.toHaveBeenCalled();
+    for (const rendered of [String(err), JSON.stringify(err), inspect(err, { depth: 10 })]) {
+      expect(rendered).not.toContain(FAKE_KEY);
+    }
+    expect((err as { agentId?: unknown }).agentId).toBeUndefined();
+  });
+
   it('retains the environment key paired with its cached package-owned client', async () => {
     vi.stubEnv('NIMBLE_API_KEY', FAKE_KEY);
     const fetchMock = vi.fn(async () => {
