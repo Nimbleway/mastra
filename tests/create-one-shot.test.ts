@@ -73,6 +73,20 @@ describe('run creation is one-shot', () => {
     expect(attempts).toBe(1);
   });
 
+  it('does not invoke create when the caller signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('caller cancelled'));
+    let attempts = 0;
+    const tool = nimbleAgentStartRunTool({
+      agentId: AGENT_ID,
+      client: mockClient({ create: async () => { attempts += 1; return makeRun(); } }),
+    });
+    await expect(
+      tool.execute!({ task: 'research x' }, { abortSignal: controller.signal } as never),
+    ).rejects.toMatchObject({ createOutcome: 'unknown' });
+    expect(attempts).toBe(0);
+  });
+
   it('sends X-Client-Source: mastra and the create body on success', async () => {
     const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const headers = new Headers(init?.headers);

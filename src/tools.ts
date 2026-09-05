@@ -963,6 +963,7 @@ export function nimbleAgentStartRunTool(config: NimbleAgentStartRunConfig = {}) 
 
       let run: NimbleAgentRawRun;
       try {
+        if (signal?.aborted) throw abortReason(signal);
         // One-shot by contract: never let the SDK's default retry policy
         // (408/409/429/5xx) replay a non-idempotent, billed POST.
         run = await abortable(
