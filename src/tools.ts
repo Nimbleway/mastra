@@ -1147,7 +1147,17 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
             if ((deadlineSignal.aborted || waitExpired()) && !signal?.aborted) break;
             throw err;
           }
-          if (performance.now() - waitStartedAt >= wait.timeoutMs) break;
+          if (performance.now() - waitStartedAt >= wait.timeoutMs) {
+            assertKnownStatus(fetched, ids);
+            if (
+              fetched.status === 'completed' ||
+              fetched.status === 'failed' ||
+              fetched.status === 'cancelled'
+            ) {
+              return toTerminalNotReadyOutput(fetched);
+            }
+            break;
+          }
           run = fetched;
           assertKnownStatus(run, ids);
         }

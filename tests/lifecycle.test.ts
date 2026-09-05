@@ -913,7 +913,7 @@ describe('result tool', () => {
   });
 
   it.each(['failed', 'cancelled'] as const)(
-    'keeps the last on-time snapshot when a late poll resolves %s',
+    'preserves a late terminal poll snapshot as %s/not-ready',
     async (status) => {
       let calls = 0;
       const client = mockClient({
@@ -931,7 +931,7 @@ describe('result tool', () => {
           client,
           wait: { timeoutMs: 250, pollIntervalMs: 10 },
         }).execute!({ runId: RUN_ID }, CTX),
-      ).resolves.toMatchObject({ ready: false, status: 'running', isActive: true });
+      ).resolves.toMatchObject({ ready: false, status, isActive: false });
       expect(calls).toBe(2);
     },
   );
