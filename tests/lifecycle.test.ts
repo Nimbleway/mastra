@@ -340,6 +340,40 @@ describe('result tool', () => {
     });
   });
 
+  it('prioritizes cancellation triggered by result error status inspection', async () => {
+    const controller = new AbortController();
+    const error = new Error('conflict') as Error & { status?: number };
+    Object.defineProperty(error, 'status', {
+      get() { controller.abort(new Error('caller cancelled')); return 409; },
+    });
+    await expect(nimbleAgentRunResultTool({ ...cfg, client: mockClient({
+      get: async () => makeRun({ status: 'completed', is_active: false }),
+      result: async () => { throw error; },
+    }) }).execute!({ runId: RUN_ID }, { abortSignal: controller.signal } as never))
+      .rejects.toMatchObject({ reason: 'request' });
+  });
+
+  it('honors the deadline crossed during result error status inspection', async () => {
+    const error = new Error('conflict') as Error & { status?: number };
+    Object.defineProperty(error, 'status', {
+      get() {
+        const deadline = performance.now() + 30;
+        while (performance.now() < deadline) { /* deliberately block */ }
+        return 409;
+      },
+    });
+    await expect(nimbleAgentRunResultTool({
+      ...cfg,
+      client: mockClient({
+        get: async () => makeRun({ status: 'completed', is_active: false }),
+        result: async () => { throw error; },
+      }),
+      wait: { timeoutMs: 10, pollIntervalMs: 100 },
+    }).execute!({ runId: RUN_ID }, CTX)).resolves.toMatchObject({
+      ready: false, status: 'completed', isActive: false,
+    });
+  });
+
   it('returns { ready: false } while queued/running — never blocks by default', async () => {
     for (const status of ['queued', 'running'] as const) {
       const client = mockClient({ get: async () => makeRun({ status }) });

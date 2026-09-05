@@ -102,7 +102,7 @@ describe('run creation is one-shot', () => {
     });
     await expect(tool.execute!(
       { task: 'research x' }, { abortSignal: controller.signal } as never,
-    )).rejects.toMatchObject({ createOutcome: 'unknown' });
+    )).rejects.toMatchObject({ createOutcome: 'unknown', runId: RUN_ID });
     expect(attempts).toBe(1);
   });
 

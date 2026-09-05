@@ -965,6 +965,7 @@ export function nimbleAgentStartRunTool(config: NimbleAgentStartRunConfig = {}) 
       };
 
       let run: NimbleAgentRawRun;
+      let created: NimbleAgentRawRun;
       try {
         if (signal?.aborted) throw abortReason(signal);
         // One-shot by contract: never let the SDK's default retry policy
@@ -976,12 +977,17 @@ export function nimbleAgentStartRunTool(config: NimbleAgentStartRunConfig = {}) 
           }),
           signal,
         );
-        const created = snapshotCreatedRun(run, agentId, apiKey);
-        if (signal?.aborted) throw abortReason(signal);
-        return toStartOutput(created);
+        created = snapshotCreatedRun(run, agentId, apiKey);
       } catch (err) {
         throw toCreateError(err, { agentId, apiKey, allowErrorDetails });
       }
+      if (signal?.aborted) {
+        throw new NimbleAgentRunError(
+          `Nimble agent create was cancelled after run ${created.id} was accepted; resume that run instead of creating again.`,
+          { reason: 'request', runId: created.id, agentId, createOutcome: 'unknown' },
+        );
+      }
+      return toStartOutput(created);
     },
   });
 }
@@ -1224,6 +1230,14 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
             return toTerminalNotReadyOutput(run);
           }
           const httpStatus = readStatus(err);
+          if (signal?.aborted) {
+            throw toAgentError(signal.reason, {
+              verb: 'result fetch', ...ids, apiKey, allowErrorDetails,
+            });
+          }
+          if (wait && (initialDeadlineSignal?.aborted || waitExpired())) {
+            return toTerminalNotReadyOutput(run);
+          }
           // 409: status/result eventual consistency. A bounded waiter keeps
           // trying within the original deadline; an unbounded call returns.
           if (httpStatus === 409) {
@@ -1332,7 +1346,16 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
       if (resultRun.status === 'failed' || resultRun.status === 'cancelled') {
         throw terminalFailure(resultRun, ids, undefined, apiKey, allowErrorDetails);
       }
-      return toCompletedOutput(result);
+      const completed = toCompletedOutput(result);
+      if (signal?.aborted) {
+        throw toAgentError(signal.reason, {
+          verb: 'result fetch', ...ids, apiKey, allowErrorDetails,
+        });
+      }
+      if (wait && (initialDeadlineSignal?.aborted || waitExpired())) {
+        return toTerminalNotReadyOutput(resultRun);
+      }
+      return completed;
     },
   });
 }
