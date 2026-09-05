@@ -677,6 +677,43 @@ describe('result tool', () => {
     },
   );
 
+  it.each(['credential', 'active', 'failed'] as const)(
+    'retains the prior completed snapshot when a large %s envelope scan reaches the deadline',
+    async (kind) => {
+      let reads = 0;
+      const clock = vi.spyOn(performance, 'now').mockImplementation(() => {
+        reads += 1;
+        return reads < 5 ? 0 : 20;
+      });
+      const padding = Array.from({ length: 128 }, (_, index) => `safe-${index}`);
+      const result = kind === 'failed'
+        ? { ...makeFailedResult('foreign failure'), padding }
+        : {
+            ...makeTextResult(),
+            ...(kind === 'active'
+              ? { run: makeRun({ status: 'running', is_active: true }) }
+              : {}),
+            padding: kind === 'credential' ? [...padding, FAKE_KEY] : padding,
+          };
+      try {
+        const out = await nimbleAgentRunResultTool({
+          ...cfg,
+          client: mockClient({
+            get: async () => makeRun({ status: 'completed', is_active: false }),
+            result: async () => result,
+          }),
+          wait: { timeoutMs: 10, pollIntervalMs: 100 },
+        }).execute!({ runId: RUN_ID }, CTX);
+        expect(out).toMatchObject({
+          ready: false, status: 'completed', runId: RUN_ID, agentId: AGENT_ID,
+        });
+        expect(JSON.stringify(out)).not.toContain(FAKE_KEY);
+      } finally {
+        clock.mockRestore();
+      }
+    },
+  );
+
   it.each(['error', 'detail'] as const)(
     'sanitizes a 422 with a throwing %s accessor',
     async (property) => {

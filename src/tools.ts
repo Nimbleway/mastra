@@ -1334,7 +1334,16 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
       // A successful result is model-visible. Reject the complete envelope if
       // a backend/proxy reflects the configured server-only credential in the
       // answer, structured JSON, trust metadata, or any future field.
-      if (containsCredential(result, apiKey)) {
+      const resultContainsCredential = containsCredential(result, apiKey);
+      if (signal?.aborted) {
+        throw toAgentError(signal.reason, {
+          verb: 'result fetch', ...ids, apiKey, allowErrorDetails,
+        });
+      }
+      if (wait && (initialDeadlineSignal?.aborted || waitExpired())) {
+        return toTerminalNotReadyOutput(run);
+      }
+      if (resultContainsCredential) {
         throw protocolError(ids);
       }
       if (!('output' in result)) {
