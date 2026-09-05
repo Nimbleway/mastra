@@ -566,6 +566,33 @@ describe('result tool', () => {
     }
   });
 
+  it.each(['failed', 'cancelled'] as const)(
+    'returns authoritative %s/not-ready when large terminal error formatting reaches the deadline',
+    async (status) => {
+      let reads = 0;
+      const clock = vi.spyOn(performance, 'now').mockImplementation(() => {
+        reads += 1;
+        return reads < 3 ? 0 : 20;
+      });
+      try {
+        const out = await nimbleAgentRunResultTool({
+          ...cfg,
+          client: mockClient({
+            get: async () => makeRun({
+              status,
+              is_active: false,
+              error: { message: 'large terminal detail '.repeat(2_000), ref_id: RUN_ID },
+            }),
+          }),
+          wait: { timeoutMs: 10, pollIntervalMs: 100 },
+        }).execute!({ runId: RUN_ID }, CTX);
+        expect(out).toMatchObject({ ready: false, status, isActive: false, runId: RUN_ID });
+      } finally {
+        clock.mockRestore();
+      }
+    },
+  );
+
   it('maps a 409 from the result endpoint to { ready: false }', async () => {
     const client = mockClient({
       get: async () => makeRun({ status: 'completed', is_active: false }),

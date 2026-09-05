@@ -1231,7 +1231,11 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
         return toPendingOutput(run, run.status);
       }
       if (run.status === 'failed' || run.status === 'cancelled') {
-        throw terminalFailure(run, ids, undefined, apiKey, allowErrorDetails);
+        const failure = terminalFailure(run, ids, undefined, apiKey, allowErrorDetails);
+        if (wait && (initialDeadlineSignal?.aborted || waitExpired())) {
+          return toTerminalNotReadyOutput(run);
+        }
+        throw failure;
       }
 
       // status === 'completed' — fetch the output.
@@ -1306,13 +1310,17 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
             if (wait && (initialDeadlineSignal?.aborted || waitExpired())) {
               return toTerminalNotReadyOutput(run);
             }
-            throw terminalFailure(
+            const failure = terminalFailure(
               failed.run,
               ids,
               failed.error.message,
               apiKey,
               allowErrorDetails,
             );
+            if (wait && (initialDeadlineSignal?.aborted || waitExpired())) {
+              return toTerminalNotReadyOutput(failed.run);
+            }
+            throw failure;
           }
           throw protocolError(ids);
         }
@@ -1394,13 +1402,17 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
         if (wait && (initialDeadlineSignal?.aborted || waitExpired())) {
           return toTerminalNotReadyOutput(run);
         }
-        throw terminalFailure(
+        const failure = terminalFailure(
           failed.run,
           ids,
           failed.error.message,
           apiKey,
           allowErrorDetails,
         );
+        if (wait && (initialDeadlineSignal?.aborted || waitExpired())) {
+          return toTerminalNotReadyOutput(failed.run);
+        }
+        throw failure;
       }
       // Re-validate the run object embedded in the result payload rather than
       // trusting only the earlier status snapshot: an eventually-inconsistent
@@ -1435,7 +1447,11 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
         continue;
       }
       if (resultRun.status === 'failed' || resultRun.status === 'cancelled') {
-        throw terminalFailure(resultRun, ids, undefined, apiKey, allowErrorDetails);
+        const failure = terminalFailure(resultRun, ids, undefined, apiKey, allowErrorDetails);
+        if (wait && (initialDeadlineSignal?.aborted || waitExpired())) {
+          return toTerminalNotReadyOutput(resultRun);
+        }
+        throw failure;
       }
       let completed: NimbleAgentRunCompletedOutput;
       try {
