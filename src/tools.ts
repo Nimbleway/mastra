@@ -312,18 +312,22 @@ function containsCredential(
 }
 
 /** Successful SDK payloads must be inert data, never executable accessors. */
-function hasUnsafeAccessors(value: unknown, seen = new WeakSet<object>()): boolean {
-  if (value === null || typeof value !== 'object') return false;
-  if (seen.has(value)) return false;
-  seen.add(value);
-  try {
-    for (const key of Reflect.ownKeys(value)) {
-      const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      if (!descriptor || 'get' in descriptor || 'set' in descriptor) return true;
-      if (hasUnsafeAccessors(descriptor.value, seen)) return true;
+function hasUnsafeAccessors(value: unknown): boolean {
+  const seen = new WeakSet<object>();
+  const pending: unknown[] = [value];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === null || typeof current !== 'object' || seen.has(current)) continue;
+    seen.add(current);
+    try {
+      for (const key of Reflect.ownKeys(current)) {
+        const descriptor = Object.getOwnPropertyDescriptor(current, key);
+        if (!descriptor || 'get' in descriptor || 'set' in descriptor) return true;
+        pending.push(descriptor.value);
+      }
+    } catch {
+      return true;
     }
-  } catch {
-    return true;
   }
   return false;
 }
