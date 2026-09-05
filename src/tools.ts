@@ -979,7 +979,11 @@ export function nimbleAgentStartRunTool(config: NimbleAgentStartRunConfig = {}) 
       } catch (err) {
         throw toCreateError(err, { agentId, apiKey, allowErrorDetails });
       }
-      return toStartOutput(snapshotCreatedRun(run, agentId, apiKey));
+      const created = snapshotCreatedRun(run, agentId, apiKey);
+      if (signal?.aborted) {
+        throw toCreateError(signal.reason, { agentId, apiKey, allowErrorDetails });
+      }
+      return toStartOutput(created);
     },
   });
 }

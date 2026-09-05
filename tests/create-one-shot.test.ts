@@ -87,6 +87,25 @@ describe('run creation is one-shot', () => {
     expect(attempts).toBe(0);
   });
 
+  it('prioritizes cancellation triggered while snapshotting a create response', async () => {
+    const controller = new AbortController();
+    let attempts = 0;
+    const run = new Proxy(makeRun(), {
+      ownKeys(target) {
+        controller.abort(new Error('caller cancelled'));
+        return Reflect.ownKeys(target);
+      },
+    });
+    const tool = nimbleAgentStartRunTool({
+      agentId: AGENT_ID,
+      client: mockClient({ create: async () => { attempts += 1; return run; } }),
+    });
+    await expect(tool.execute!(
+      { task: 'research x' }, { abortSignal: controller.signal } as never,
+    )).rejects.toMatchObject({ createOutcome: 'unknown' });
+    expect(attempts).toBe(1);
+  });
+
   it('sends X-Client-Source: mastra and the create body on success', async () => {
     const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const headers = new Headers(init?.headers);
