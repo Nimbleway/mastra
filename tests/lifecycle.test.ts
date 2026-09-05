@@ -919,6 +919,28 @@ describe('result tool', () => {
     expect(performance.now() - started).toBeLessThan(500);
   });
 
+  it.each([
+    ['409', () => httpError(409)],
+    ['422', () => httpError(422, makeFailedResult('late failure'))],
+    ['generic', () => new Error('late result failure')],
+  ] as const)('maps a synchronous late result %s rejection to completed/not-ready', async (_name, error) => {
+    const client = mockClient({
+      get: async () => makeRun({ status: 'completed', is_active: false }),
+      result: async () => {
+        const deadline = performance.now() + 30;
+        while (performance.now() < deadline) { /* deliberately block */ }
+        throw error();
+      },
+    });
+    await expect(
+      nimbleAgentRunResultTool({
+        ...cfg,
+        client,
+        wait: { timeoutMs: 10, pollIntervalMs: 5 },
+      }).execute!({ runId: RUN_ID }, CTX),
+    ).resolves.toMatchObject({ ready: false, status: 'completed', isActive: false });
+  });
+
   it('enforces the final deadline when an injected client resolves after abort', async () => {
     const client = mockClient({
       get: async () => makeRun({ status: 'completed', is_active: false }),

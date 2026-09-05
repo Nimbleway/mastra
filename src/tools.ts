@@ -1170,7 +1170,7 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
           wait ? initialSignal : signal,
         );
       } catch (err) {
-        if (wait && initialDeadlineSignal?.aborted && !signal?.aborted) {
+        if (wait && (initialDeadlineSignal?.aborted || waitExpired()) && !signal?.aborted) {
           return toCompletedNotReadyOutput(run);
         }
         const httpStatus = readStatus(err);
