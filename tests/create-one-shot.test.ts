@@ -57,6 +57,22 @@ describe('run creation is one-shot', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ['never settles', async () => await new Promise<never>(() => undefined)],
+    ['settles late', async () => await new Promise<ReturnType<typeof makeRun>>((resolve) => setTimeout(() => resolve(makeRun()), 50))],
+  ] as const)('bounds a cancelled injected create that %s', async (_name, create) => {
+    const controller = new AbortController();
+    let attempts = 0;
+    const tool = nimbleAgentStartRunTool({
+      agentId: AGENT_ID,
+      client: mockClient({ create: async () => { attempts += 1; return await create(); } }),
+    });
+    const pending = tool.execute!({ task: 'research x' }, { abortSignal: controller.signal } as never);
+    controller.abort(new Error('caller cancelled'));
+    await expect(pending).rejects.toMatchObject({ createOutcome: 'unknown' });
+    expect(attempts).toBe(1);
+  });
+
   it('sends X-Client-Source: mastra and the create body on success', async () => {
     const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const headers = new Headers(init?.headers);

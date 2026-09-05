@@ -965,10 +965,13 @@ export function nimbleAgentStartRunTool(config: NimbleAgentStartRunConfig = {}) 
       try {
         // One-shot by contract: never let the SDK's default retry policy
         // (408/409/429/5xx) replay a non-idempotent, billed POST.
-        run = await client.agents.runs.create(agentId, body, {
-          ...requestOptions(signal),
-          maxRetries: 0,
-        });
+        run = await abortable(
+          client.agents.runs.create(agentId, body, {
+            ...requestOptions(signal),
+            maxRetries: 0,
+          }),
+          signal,
+        );
       } catch (err) {
         throw toCreateError(err, { agentId, apiKey, allowErrorDetails });
       }
