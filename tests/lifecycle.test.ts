@@ -952,6 +952,33 @@ describe('result tool', () => {
     ).rejects.toMatchObject({ reason: 'failed', message: expect.stringContaining('late failure') });
   });
 
+  it.each(['failed', 'cancelled'] as const)(
+    'returns %s/not-ready when successful failure-envelope validation crosses the deadline',
+    async (status) => {
+      let reads = 0;
+      const clock = vi.spyOn(performance, 'now').mockImplementation(() => {
+        reads += 1;
+        return reads < 5 ? 0 : 20;
+      });
+      try {
+        const out = await nimbleAgentRunResultTool({
+          ...cfg,
+          client: mockClient({
+            get: async () => makeRun({ status: 'completed', is_active: false }),
+            result: async () => ({
+              ...makeFailedResult('late failure'),
+              run: makeRun({ status, is_active: false }),
+            }),
+          }),
+          wait: { timeoutMs: 10, pollIntervalMs: 100 },
+        }).execute!({ runId: RUN_ID }, CTX);
+        expect(out).toMatchObject({ ready: false, status, isActive: false });
+      } finally {
+        clock.mockRestore();
+      }
+    },
+  );
+
   it.each([undefined, 42])(
     'rejects a returned failed envelope with invalid error.ref_id %s',
     async (refId) => {

@@ -1341,6 +1341,16 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
         // Failed form: { run, error }. Require the complete envelope and a
         // failed/cancelled terminal status before mapping it as a run failure.
         const failed = asFailedResult(result);
+        if (signal?.aborted) {
+          throw toAgentError(signal.reason, {
+            verb: 'result fetch', ...ids, apiKey, allowErrorDetails,
+          });
+        }
+        if (wait && (initialDeadlineSignal?.aborted || waitExpired())) {
+          return failed && (failed.run.status === 'failed' || failed.run.status === 'cancelled')
+            ? toTerminalNotReadyOutput(failed.run)
+            : toTerminalNotReadyOutput(run);
+        }
         if (
           !failed ||
           (failed.run.status !== 'failed' && failed.run.status !== 'cancelled')
