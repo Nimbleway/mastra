@@ -1282,7 +1282,22 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
             return toTerminalNotReadyOutput(run);
           }
           if (failed) {
-            assertMatchingRunIds(failed.run, ids, apiKey);
+            try {
+              assertMatchingRunIds(failed.run, ids, apiKey);
+              if (failed.run.status !== 'failed' && failed.run.status !== 'cancelled') {
+                throw protocolError(ids);
+              }
+            } catch (validationError) {
+              if (signal?.aborted) {
+                throw toAgentError(signal.reason, {
+                  verb: 'result fetch', ...ids, apiKey, allowErrorDetails,
+                });
+              }
+              if (wait && (initialDeadlineSignal?.aborted || waitExpired())) {
+                return toTerminalNotReadyOutput(run);
+              }
+              throw validationError;
+            }
             if (signal?.aborted) {
               throw toAgentError(signal.reason, {
                 verb: 'result fetch', ...ids, apiKey, allowErrorDetails,
@@ -1290,9 +1305,6 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
             }
             if (wait && (initialDeadlineSignal?.aborted || waitExpired())) {
               return toTerminalNotReadyOutput(run);
-            }
-            if (failed.run.status !== 'failed' && failed.run.status !== 'cancelled') {
-              throw protocolError(ids);
             }
             throw terminalFailure(
               failed.run,
@@ -1419,7 +1431,7 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
       }
       if (resultRun.status === 'queued' || resultRun.status === 'running') {
         if (!wait) return toPendingOutput(resultRun, resultRun.status);
-        if (!(await waitBeforeResultRetry())) return toPendingOutput(resultRun, resultRun.status);
+        if (!(await waitBeforeResultRetry())) return toTerminalNotReadyOutput(run);
         continue;
       }
       if (resultRun.status === 'failed' || resultRun.status === 'cancelled') {

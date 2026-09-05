@@ -696,6 +696,37 @@ describe('result tool', () => {
     },
   );
 
+  it('retains the prior completed snapshot when malformed 422 identity validation reaches the deadline', async () => {
+    let reads = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => {
+      reads += 1;
+      return reads < 6 ? 0 : 20;
+    });
+    const failed = {
+      ...makeFailedResult('foreign failure'),
+      run: makeRun({
+        status: 'failed',
+        is_active: false,
+        id: 'task_run_ffffffff-ffff-ffff-ffff-ffffffffffff',
+        future_graph: Array.from({ length: 128 }, (_, index) => ({ index })),
+      } as never),
+    };
+    try {
+      const out = await nimbleAgentRunResultTool({
+        ...cfg,
+        client: mockClient({
+          get: async () => makeRun({ status: 'completed', is_active: false }),
+          result: async () => { throw httpError(422, failed); },
+        }),
+        wait: { timeoutMs: 10, pollIntervalMs: 100 },
+      }).execute!({ runId: RUN_ID }, CTX);
+      expect(out).toMatchObject({ ready: false, status: 'completed', runId: RUN_ID });
+      expect(JSON.stringify(out)).not.toContain('ffffffff');
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it.each([undefined, 42])(
     'rejects a 422 failed envelope with invalid error.ref_id %s',
     async (refId) => {
@@ -894,7 +925,7 @@ describe('result tool', () => {
       client,
       wait: { timeoutMs: 50, pollIntervalMs: 100 },
     }).execute!({ runId: RUN_ID }, CTX);
-    expect(out).toMatchObject({ ready: false, status: 'running', isActive: true });
+    expect(out).toMatchObject({ ready: false, status: 'completed', isActive: false });
     expect(resultCalls).toBe(1);
   });
 
