@@ -585,6 +585,27 @@ function toCreateError(
   });
 }
 
+function forceAmbiguousCancelledCreate(
+  failure: NimbleAgentRunError,
+  agentId: string,
+): NimbleAgentRunError {
+  const runRef = failure.runId ? ` (run ${failure.runId})` : '';
+  return new NimbleAgentRunError(
+    `Nimble agent run creation was cancelled after the create request was invoked${runRef}. ` +
+      'The run may or may not have been created server-side. Do not automatically start ' +
+      'another run — list recent runs for this agent (or check the Nimble console) to ' +
+      'reconcile before creating again.',
+    {
+      reason: 'request',
+      runId: failure.runId,
+      agentId,
+      status: failure.status,
+      createOutcome: 'unknown',
+      cause: failure.cause,
+    },
+  );
+}
+
 function terminalFailure(
   run: Pick<NimbleAgentRawRun, 'status'> & Partial<NimbleAgentRawRun>,
   ids: { runId: string; agentId: string },
@@ -1052,12 +1073,20 @@ export function nimbleAgentStartRunTool(config: NimbleAgentStartRunConfig = {}) 
         );
         created = snapshotCreatedRun(run, agentId, apiKey);
       } catch (err) {
-        throw toCreateError(err, {
+        const failure = toCreateError(err, {
           agentId,
           apiKey,
           allowErrorDetails,
           forceUnknownOutcome: createInvoked && signal?.aborted,
         });
+        // Error formatting reads only bounded, sanitized properties, but even a
+        // hostile getter can abort the caller while that formatting happens.
+        // Re-check afterwards so every post-invocation cancellation remains
+        // ambiguous and can never invite a duplicate billed create.
+        if (createInvoked && signal?.aborted) {
+          throw forceAmbiguousCancelledCreate(failure, agentId);
+        }
+        throw failure;
       }
       if (signal?.aborted) {
         throw new NimbleAgentRunError(

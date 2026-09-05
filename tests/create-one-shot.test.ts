@@ -92,6 +92,41 @@ describe('run creation is one-shot', () => {
     expect(attempts).toBe(1);
   });
 
+  it('rechecks cancellation after sanitizing a hostile create error', async () => {
+    const controller = new AbortController();
+    let attempts = 0;
+    const hostile = Object.create(null) as Record<string, unknown>;
+    Object.defineProperties(hostile, {
+      status: { enumerable: true, value: 429 },
+      message: {
+        enumerable: true,
+        get() {
+          controller.abort(new Error('caller cancelled'));
+          return 'rate limited';
+        },
+      },
+    });
+    const tool = nimbleAgentStartRunTool({
+      agentId: AGENT_ID,
+      apiKey: FAKE_KEY,
+      client: mockClient({
+        create: async () => {
+          attempts += 1;
+          throw hostile;
+        },
+      }),
+    });
+    const err = await tool.execute!(
+      { task: 'research x' }, { abortSignal: controller.signal } as never,
+    ).then(
+      () => { throw new Error('expected failure'); },
+      (error: unknown) => error as NimbleAgentRunError,
+    );
+    expect(err).toMatchObject({ createOutcome: 'unknown', status: 429 });
+    expect(err.message).toContain('Do not automatically start another run');
+    expect(attempts).toBe(1);
+  });
+
   it('does not invoke create when the caller signal is already aborted', async () => {
     const controller = new AbortController();
     controller.abort(new Error('caller cancelled'));
