@@ -7,6 +7,7 @@ import {
 } from '../src/tools';
 import { NimbleAgentRunError, NimbleConfigError } from '../src/errors';
 import type { NimbleAgentRunCompletedOutput, NimbleAgentRunCreateBody } from '../src/schemas';
+import { nimbleAgentTrustSchema } from '../src/schemas';
 import {
   AGENT_ID,
   CTX,
@@ -340,6 +341,29 @@ describe('result tool', () => {
     });
   });
 
+  it('returns completed/not-ready when slow invalid trust validation crosses the deadline', async () => {
+    const result = makeTextResult();
+    result.output.trust = structuredClone(result.output.trust);
+    result.output.trust.claims.push({ invalid: true } as never);
+    const original = nimbleAgentTrustSchema.safeParse.bind(nimbleAgentTrustSchema);
+    const parse = vi.spyOn(nimbleAgentTrustSchema, 'safeParse').mockImplementation((value) => {
+      const deadline = performance.now() + 30;
+      while (performance.now() < deadline) { /* deliberately block */ }
+      return original(value);
+    });
+    await expect(nimbleAgentRunResultTool({
+      ...cfg,
+      client: mockClient({
+        get: async () => makeRun({ status: 'completed', is_active: false }),
+        result: async () => result,
+      }),
+      wait: { timeoutMs: 10, pollIntervalMs: 100 },
+    }).execute!({ runId: RUN_ID }, CTX)).resolves.toMatchObject({
+      ready: false, status: 'completed', isActive: false,
+    });
+    parse.mockRestore();
+  });
+
   it('prioritizes cancellation triggered by result error status inspection', async () => {
     const controller = new AbortController();
     const error = new Error('conflict') as Error & { status?: number };
@@ -367,6 +391,42 @@ describe('result tool', () => {
       client: mockClient({
         get: async () => makeRun({ status: 'completed', is_active: false }),
         result: async () => { throw error; },
+      }),
+      wait: { timeoutMs: 10, pollIntervalMs: 100 },
+    }).execute!({ runId: RUN_ID }, CTX)).resolves.toMatchObject({
+      ready: false, status: 'completed', isActive: false,
+    });
+  });
+
+  it('prioritizes cancellation triggered while parsing a 422 body', async () => {
+    const controller = new AbortController();
+    const body = new Proxy(makeFailedResult('failed'), {
+      ownKeys(target) {
+        controller.abort(new Error('caller cancelled'));
+        return Reflect.ownKeys(target);
+      },
+    });
+    const error = httpError(422, body);
+    await expect(nimbleAgentRunResultTool({ ...cfg, client: mockClient({
+      get: async () => makeRun({ status: 'completed', is_active: false }),
+      result: async () => { throw error; },
+    }) }).execute!({ runId: RUN_ID }, { abortSignal: controller.signal } as never))
+      .rejects.toMatchObject({ reason: 'request' });
+  });
+
+  it('honors the deadline crossed while parsing a 422 body', async () => {
+    const body = new Proxy(makeFailedResult('failed'), {
+      ownKeys(target) {
+        const deadline = performance.now() + 30;
+        while (performance.now() < deadline) { /* deliberately block */ }
+        return Reflect.ownKeys(target);
+      },
+    });
+    await expect(nimbleAgentRunResultTool({
+      ...cfg,
+      client: mockClient({
+        get: async () => makeRun({ status: 'completed', is_active: false }),
+        result: async () => { throw httpError(422, body); },
       }),
       wait: { timeoutMs: 10, pollIntervalMs: 100 },
     }).execute!({ runId: RUN_ID }, CTX)).resolves.toMatchObject({

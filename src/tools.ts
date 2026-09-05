@@ -1257,6 +1257,14 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
         // 422: terminal failure — the body carries the run + structured error.
         if (httpStatus === 422) {
           const failed = readFailedResultBody(err);
+          if (signal?.aborted) {
+            throw toAgentError(signal.reason, {
+              verb: 'result fetch', ...ids, apiKey, allowErrorDetails,
+            });
+          }
+          if (wait && (initialDeadlineSignal?.aborted || waitExpired())) {
+            return toTerminalNotReadyOutput(run);
+          }
           if (failed) {
             assertMatchingRunIds(failed.run, ids, apiKey);
             if (failed.run.status !== 'failed' && failed.run.status !== 'cancelled') {
@@ -1346,7 +1354,20 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
       if (resultRun.status === 'failed' || resultRun.status === 'cancelled') {
         throw terminalFailure(resultRun, ids, undefined, apiKey, allowErrorDetails);
       }
-      const completed = toCompletedOutput(result);
+      let completed: NimbleAgentRunCompletedOutput;
+      try {
+        completed = toCompletedOutput(result);
+      } catch (err) {
+        if (signal?.aborted) {
+          throw toAgentError(signal.reason, {
+            verb: 'result fetch', ...ids, apiKey, allowErrorDetails,
+          });
+        }
+        if (wait && (initialDeadlineSignal?.aborted || waitExpired())) {
+          return toTerminalNotReadyOutput(resultRun);
+        }
+        throw err;
+      }
       if (signal?.aborted) {
         throw toAgentError(signal.reason, {
           verb: 'result fetch', ...ids, apiKey, allowErrorDetails,
