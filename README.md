@@ -128,8 +128,10 @@ const result = nimbleAgentRunResultTool({
 `{ ready: false }` and the run keeps going server-side — check again later.
 If the initial status request itself reaches that deadline, `status` is
 `unknown` and activity is omitted because no lifecycle snapshot was received.
-If the run is known completed but result retrieval reaches the deadline, the
-tool returns `{ ready: false, status: 'completed', isActive: false }`.
+If a terminal snapshot arrives only after the deadline, or a completed run's
+result retrieval reaches it, the tool returns `{ ready: false, status,
+isActive: false }` with the authoritative `completed`, `failed`, or `cancelled`
+status. A later call can retrieve or surface the terminal details.
 Without `wait` (the default) the result tool never blocks.
 
 ## Answers and trust

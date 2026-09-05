@@ -773,11 +773,11 @@ function toPendingOutput(
   };
 }
 
-function toCompletedNotReadyOutput(run: NimbleAgentRawRun): NimbleAgentRunPendingOutput {
+function toTerminalNotReadyOutput(run: NimbleAgentRawRun): NimbleAgentRunPendingOutput {
   return {
     ready: false,
     ...baseFields(run),
-    status: 'completed',
+    status: run.status as 'completed' | 'failed' | 'cancelled',
     isActive: false,
     ...(run.started_at ? { startedAt: run.started_at } : {}),
     ...(run.completed_at ? { completedAt: run.completed_at } : {}),
@@ -1113,7 +1113,9 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
       }
       assertKnownStatus(run, ids);
       if (waitExpired()) {
-        if (run.status === 'completed') return toCompletedNotReadyOutput(run);
+        if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') {
+          return toTerminalNotReadyOutput(run);
+        }
         if (run.status === 'queued' || run.status === 'running') {
           return toPendingOutput(run, run.status);
         }
@@ -1171,7 +1173,7 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
         );
       } catch (err) {
         if (wait && (initialDeadlineSignal?.aborted || waitExpired()) && !signal?.aborted) {
-          return toCompletedNotReadyOutput(run);
+          return toTerminalNotReadyOutput(run);
         }
         const httpStatus = readStatus(err);
         // 409: the result endpoint still considers the run active (eventual
@@ -1216,7 +1218,7 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
         });
       }
       if (wait && (initialDeadlineSignal?.aborted || waitExpired())) {
-        return toCompletedNotReadyOutput(run);
+        return toTerminalNotReadyOutput(run);
       }
 
       const resultSnapshot = snapshotPlainData(result);

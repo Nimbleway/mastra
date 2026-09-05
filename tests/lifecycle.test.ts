@@ -830,6 +830,26 @@ describe('result tool', () => {
     expect(resultCalls).toBe(0);
   });
 
+  it.each(['failed', 'cancelled'] as const)(
+    'maps a synchronous late initial %s snapshot to terminal/not-ready',
+    async (status) => {
+      const client = mockClient({
+        get: async () => {
+          const deadline = performance.now() + 30;
+          while (performance.now() < deadline) { /* deliberately block */ }
+          return makeRun({ status, is_active: false });
+        },
+      });
+      await expect(
+        nimbleAgentRunResultTool({
+          ...cfg,
+          client,
+          wait: { timeoutMs: 10, pollIntervalMs: 5 },
+        }).execute!({ runId: RUN_ID }, CTX),
+      ).resolves.toMatchObject({ ready: false, status, isActive: false });
+    },
+  );
+
   it('maps a synchronous late initial-status rejection to unknown', async () => {
     const client = mockClient({
       get: async () => {
@@ -891,6 +911,30 @@ describe('result tool', () => {
     ).resolves.toMatchObject({ ready: false, status: 'running', isActive: true });
     expect(calls).toBe(2);
   });
+
+  it.each(['failed', 'cancelled'] as const)(
+    'keeps the last on-time snapshot when a late poll resolves %s',
+    async (status) => {
+      let calls = 0;
+      const client = mockClient({
+        get: async () => {
+          calls += 1;
+          if (calls === 1) return makeRun({ status: 'running', is_active: true });
+          const deadline = performance.now() + 300;
+          while (performance.now() < deadline) { /* deliberately block */ }
+          return makeRun({ status, is_active: false });
+        },
+      });
+      await expect(
+        nimbleAgentRunResultTool({
+          ...cfg,
+          client,
+          wait: { timeoutMs: 250, pollIntervalMs: 10 },
+        }).execute!({ runId: RUN_ID }, CTX),
+      ).resolves.toMatchObject({ ready: false, status: 'running', isActive: true });
+      expect(calls).toBe(2);
+    },
+  );
 
   it('bounds the final result request by the original wait timeout', async () => {
     const client = mockClient({

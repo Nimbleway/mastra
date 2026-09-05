@@ -188,7 +188,7 @@ export const nimbleAgentRunPendingOutputSchema = z.union([
     ready: z.literal(false),
     runId: z.string(),
     agentId: z.string(),
-    status: z.literal('completed'),
+    status: z.enum(['completed', 'failed', 'cancelled']),
     isActive: z.literal(false),
     effort: effortSchema,
     createdAt: z.string(),
