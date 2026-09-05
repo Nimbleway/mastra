@@ -385,6 +385,45 @@ describe('result tool', () => {
     expect(out).toMatchObject({ ready: false, status: 'running' });
   });
 
+  it('retries a transient result 409 within the bounded wait', async () => {
+    let resultCalls = 0;
+    const client = mockClient({
+      get: async () => makeRun({ status: 'completed', is_active: false }),
+      result: async () => {
+        resultCalls += 1;
+        if (resultCalls === 1) throw httpError(409, { detail: 'still active' });
+        return makeTextResult();
+      },
+    });
+    const out = await nimbleAgentRunResultTool({
+      ...cfg,
+      client,
+      wait: { timeoutMs: 250, pollIntervalMs: 100 },
+    }).execute!({ runId: RUN_ID }, CTX);
+    expect(out).toMatchObject({ ready: true, status: 'completed' });
+    expect(resultCalls).toBe(2);
+  });
+
+  it('stops retrying result 409 at the original wait deadline', async () => {
+    let resultCalls = 0;
+    const client = mockClient({
+      get: async () => makeRun({ status: 'completed', is_active: false }),
+      result: async () => {
+        resultCalls += 1;
+        throw httpError(409, { detail: 'still active' });
+      },
+    });
+    const started = performance.now();
+    const out = await nimbleAgentRunResultTool({
+      ...cfg,
+      client,
+      wait: { timeoutMs: 150, pollIntervalMs: 100 },
+    }).execute!({ runId: RUN_ID }, CTX);
+    expect(out).toMatchObject({ ready: false, status: 'completed', isActive: false });
+    expect(resultCalls).toBeGreaterThanOrEqual(2);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
   it('maps a 422 with a bare failed body to a terminal failure with the server message', async () => {
     const client = mockClient({
       get: async () => makeRun({ status: 'completed', is_active: false }),

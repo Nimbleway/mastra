@@ -859,8 +859,12 @@ function abortReason(signal: AbortSignal | undefined): unknown {
 
 /** Await an operation without trusting the implementation to honor its signal. */
 function abortable<T>(operation: PromiseLike<T>, signal: AbortSignal | undefined): Promise<T> {
-  if (!signal) return Promise.resolve(operation);
-  if (signal.aborted) return Promise.reject(abortReason(signal));
+  const promise = Promise.resolve(operation);
+  if (!signal) return promise;
+  if (signal.aborted) {
+    void promise.catch(() => undefined);
+    return Promise.reject(abortReason(signal));
+  }
   return new Promise<T>((resolve, reject) => {
     const settle = (callback: (value: never) => void, value: unknown) => {
       signal.removeEventListener('abort', onAbort);
@@ -868,7 +872,7 @@ function abortable<T>(operation: PromiseLike<T>, signal: AbortSignal | undefined
     };
     const onAbort = () => settle(reject, abortReason(signal));
     signal.addEventListener('abort', onAbort, { once: true });
-    Promise.resolve(operation).then(
+    promise.then(
       (value) => settle(resolve, value),
       (error) => settle(reject, error),
     );
@@ -1180,25 +1184,33 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
 
       // status === 'completed' — fetch the output.
       let result: NimbleAgentRawResult | NimbleAgentRawFailedResult;
-      try {
-        result = await abortable(
-          client.agents.runs.result(
-            input.runId,
-            { agent_id: agentId },
-            requestOptions(wait ? initialSignal : signal),
-          ),
-          wait ? initialSignal : signal,
-        );
-      } catch (err) {
-        if (wait && (initialDeadlineSignal?.aborted || waitExpired()) && !signal?.aborted) {
-          return toTerminalNotReadyOutput(run);
-        }
-        const httpStatus = readStatus(err);
-        // 409: the result endpoint still considers the run active (eventual
-        // consistency with the status we just read) — report not-ready.
-        if (httpStatus === 409) {
-          return toPendingOutput({ ...run, status: 'running', is_active: true }, 'running');
-        }
+      while (true) {
+        try {
+          result = await abortable(
+            client.agents.runs.result(
+              input.runId,
+              { agent_id: agentId },
+              requestOptions(wait ? initialSignal : signal),
+            ),
+            wait ? initialSignal : signal,
+          );
+          break;
+        } catch (err) {
+          if (wait && (initialDeadlineSignal?.aborted || waitExpired()) && !signal?.aborted) {
+            return toTerminalNotReadyOutput(run);
+          }
+          const httpStatus = readStatus(err);
+          // 409: status/result eventual consistency. A bounded waiter keeps
+          // trying within the original deadline; an unbounded call returns.
+          if (httpStatus === 409) {
+            if (!wait) {
+              return toPendingOutput({ ...run, status: 'running', is_active: true }, 'running');
+            }
+            const remaining = wait.timeoutMs - (performance.now() - startedWaiting!);
+            if (remaining <= 0) return toTerminalNotReadyOutput(run);
+            await sleepBeforePoll(Math.min(wait.pollIntervalMs, remaining));
+            continue;
+          }
         // 422: terminal failure — the body carries the run + structured error.
         if (httpStatus === 422) {
           const failed = readFailedResultBody(err);
@@ -1217,12 +1229,13 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
           }
           throw protocolError(ids);
         }
-        throw toAgentError(err, {
-          verb: 'result fetch',
-          ...ids,
-          apiKey,
-          allowErrorDetails,
-        });
+          throw toAgentError(err, {
+            verb: 'result fetch',
+            ...ids,
+            apiKey,
+            allowErrorDetails,
+          });
+        }
       }
 
       // Enforce cancellation independently of client settlement behavior. An
