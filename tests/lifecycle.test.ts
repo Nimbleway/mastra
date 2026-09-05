@@ -850,6 +850,27 @@ describe('result tool', () => {
     },
   );
 
+  it('prioritizes caller cancellation over a late terminal poll snapshot', async () => {
+    const controller = new AbortController();
+    let calls = 0;
+    const client = mockClient({
+      get: async () => {
+        calls += 1;
+        if (calls === 1) return makeRun({ status: 'running', is_active: true });
+        const deadline = performance.now() + 300;
+        while (performance.now() < deadline) { /* deliberately block */ }
+        return makeRun({ status: 'failed', is_active: false });
+      },
+    });
+    const pending = nimbleAgentRunResultTool({
+      ...cfg,
+      client,
+      wait: { timeoutMs: 250, pollIntervalMs: 10 },
+    }).execute!({ runId: RUN_ID }, { abortSignal: controller.signal } as never);
+    setTimeout(() => controller.abort(new Error('caller cancelled')), 20);
+    await expect(pending).rejects.toBeInstanceOf(NimbleAgentRunError);
+  });
+
   it('maps a synchronous late initial-status rejection to unknown', async () => {
     const client = mockClient({
       get: async () => {

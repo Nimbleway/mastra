@@ -1149,6 +1149,14 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
           }
           if (performance.now() - waitStartedAt >= wait.timeoutMs) {
             assertKnownStatus(fetched, ids);
+            if (signal?.aborted) {
+              throw toAgentError(signal.reason, {
+                verb: 'status check',
+                ...ids,
+                apiKey,
+                allowErrorDetails,
+              });
+            }
             if (
               fetched.status === 'completed' ||
               fetched.status === 'failed' ||
