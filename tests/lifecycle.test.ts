@@ -320,6 +320,26 @@ describe('result tool', () => {
       .rejects.toMatchObject({ reason: 'request' });
   });
 
+  it('returns completed/not-ready when result snapshotting consumes the deadline', async () => {
+    const result = new Proxy(makeTextResult(), {
+      ownKeys(target) {
+        const deadline = performance.now() + 30;
+        while (performance.now() < deadline) { /* deliberately block */ }
+        return Reflect.ownKeys(target);
+      },
+    });
+    await expect(nimbleAgentRunResultTool({
+      ...cfg,
+      client: mockClient({
+        get: async () => makeRun({ status: 'completed', is_active: false }),
+        result: async () => result,
+      }),
+      wait: { timeoutMs: 10, pollIntervalMs: 100 },
+    }).execute!({ runId: RUN_ID }, CTX)).resolves.toMatchObject({
+      ready: false, status: 'completed', isActive: false,
+    });
+  });
+
   it('returns { ready: false } while queued/running — never blocks by default', async () => {
     for (const status of ['queued', 'running'] as const) {
       const client = mockClient({ get: async () => makeRun({ status }) });

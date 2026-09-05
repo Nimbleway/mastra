@@ -106,6 +106,20 @@ describe('run creation is one-shot', () => {
     expect(attempts).toBe(1);
   });
 
+  it('sanitizes hostile create snapshot failures as ambiguous', async () => {
+    const run = new Proxy(makeRun(), {
+      ownKeys() { throw new Error(`snapshot exposed ${FAKE_KEY}`); },
+    });
+    const err = await nimbleAgentStartRunTool({
+      agentId: AGENT_ID, apiKey: FAKE_KEY,
+      client: mockClient({ create: async () => run }),
+    }).execute!({ task: 'research x' }, CTX).catch((error: unknown) => error as NimbleAgentRunError);
+    expect(err).toMatchObject({ reason: 'protocol', createOutcome: 'unknown' });
+    for (const rendered of [String(err), JSON.stringify(err), inspect(err, { depth: 10 })]) {
+      expect(rendered).not.toContain(FAKE_KEY);
+    }
+  });
+
   it('sends X-Client-Source: mastra and the create body on success', async () => {
     const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const headers = new Headers(init?.headers);

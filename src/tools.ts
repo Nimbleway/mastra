@@ -976,14 +976,12 @@ export function nimbleAgentStartRunTool(config: NimbleAgentStartRunConfig = {}) 
           }),
           signal,
         );
+        const created = snapshotCreatedRun(run, agentId, apiKey);
+        if (signal?.aborted) throw abortReason(signal);
+        return toStartOutput(created);
       } catch (err) {
         throw toCreateError(err, { agentId, apiKey, allowErrorDetails });
       }
-      const created = snapshotCreatedRun(run, agentId, apiKey);
-      if (signal?.aborted) {
-        throw toCreateError(signal.reason, { agentId, apiKey, allowErrorDetails });
-      }
-      return toStartOutput(created);
     },
   });
 }
@@ -1288,6 +1286,9 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
         throw toAgentError(signal.reason, {
           verb: 'result fetch', ...ids, apiKey, allowErrorDetails,
         });
+      }
+      if (wait && (initialDeadlineSignal?.aborted || waitExpired())) {
+        return toTerminalNotReadyOutput(run);
       }
       if (!resultSnapshot.ok || typeof resultSnapshot.value !== 'object' || resultSnapshot.value === null) {
         throw protocolError(ids);
