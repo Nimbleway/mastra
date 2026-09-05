@@ -857,6 +857,7 @@ describe('result tool', () => {
       get: async () => {
         calls += 1;
         if (calls === 1) return makeRun({ status: 'running', is_active: true });
+        controller.abort(new Error('caller cancelled'));
         const deadline = performance.now() + 300;
         while (performance.now() < deadline) { /* deliberately block */ }
         return makeRun({ status: 'failed', is_active: false });
@@ -867,8 +868,8 @@ describe('result tool', () => {
       client,
       wait: { timeoutMs: 250, pollIntervalMs: 10 },
     }).execute!({ runId: RUN_ID }, { abortSignal: controller.signal } as never);
-    setTimeout(() => controller.abort(new Error('caller cancelled')), 20);
     await expect(pending).rejects.toBeInstanceOf(NimbleAgentRunError);
+    expect(calls).toBe(2);
   });
 
   it('maps a synchronous late initial-status rejection to unknown', async () => {
