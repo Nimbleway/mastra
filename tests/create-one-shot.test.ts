@@ -73,6 +73,25 @@ describe('run creation is one-shot', () => {
     expect(attempts).toBe(1);
   });
 
+  it('keeps a post-invocation cancellation ambiguous even when its reason resembles a 4xx response', async () => {
+    const controller = new AbortController();
+    const reason = Object.assign(new Error('caller cancelled'), { status: 429 });
+    let attempts = 0;
+    const tool = nimbleAgentStartRunTool({
+      agentId: AGENT_ID,
+      client: mockClient({
+        create: async () => {
+          attempts += 1;
+          return await new Promise<never>(() => undefined);
+        },
+      }),
+    });
+    const pending = tool.execute!({ task: 'research x' }, { abortSignal: controller.signal } as never);
+    controller.abort(reason);
+    await expect(pending).rejects.toMatchObject({ createOutcome: 'unknown' });
+    expect(attempts).toBe(1);
+  });
+
   it('does not invoke create when the caller signal is already aborted', async () => {
     const controller = new AbortController();
     controller.abort(new Error('caller cancelled'));

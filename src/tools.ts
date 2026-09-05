@@ -468,7 +468,12 @@ function classifyCreateOutcome(status: number | undefined): NimbleAgentCreateOut
 
 function toCreateError(
   err: unknown,
-  context: { agentId: string; apiKey?: string; allowErrorDetails: boolean },
+  context: {
+    agentId: string;
+    apiKey?: string;
+    allowErrorDetails: boolean;
+    forceUnknownOutcome?: boolean;
+  },
 ): NimbleAgentRunError {
   const nimbleError = isNimbleRunError(err);
   const status = readStatus(err);
@@ -476,7 +481,7 @@ function toCreateError(
     ? safeCreateOutcome(safeErrorProperty(err, 'createOutcome'))
     : undefined;
   const classifiedOutcome = classifyCreateOutcome(status);
-  const outcome = classifiedOutcome === 'unknown'
+  const outcome = context.forceUnknownOutcome || classifiedOutcome === 'unknown'
     ? 'unknown'
     : suppliedOutcome ?? classifiedOutcome;
   const message = context.allowErrorDetails
@@ -966,10 +971,12 @@ export function nimbleAgentStartRunTool(config: NimbleAgentStartRunConfig = {}) 
 
       let run: NimbleAgentRawRun;
       let created: NimbleAgentRawRun;
+      let createInvoked = false;
       try {
         if (signal?.aborted) throw abortReason(signal);
         // One-shot by contract: never let the SDK's default retry policy
         // (408/409/429/5xx) replay a non-idempotent, billed POST.
+        createInvoked = true;
         run = await abortable(
           client.agents.runs.create(agentId, body, {
             ...requestOptions(signal),
@@ -979,7 +986,12 @@ export function nimbleAgentStartRunTool(config: NimbleAgentStartRunConfig = {}) 
         );
         created = snapshotCreatedRun(run, agentId, apiKey);
       } catch (err) {
-        throw toCreateError(err, { agentId, apiKey, allowErrorDetails });
+        throw toCreateError(err, {
+          agentId,
+          apiKey,
+          allowErrorDetails,
+          forceUnknownOutcome: createInvoked && signal?.aborted,
+        });
       }
       if (signal?.aborted) {
         throw new NimbleAgentRunError(
@@ -1118,6 +1130,18 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
         }
       };
 
+      const waitBeforeResultRetry = async (): Promise<boolean> => {
+        if (!wait) return false;
+        const remaining = wait.timeoutMs - (performance.now() - startedWaiting!);
+        if (remaining <= 0) return false;
+        if (remaining <= wait.pollIntervalMs) {
+          await sleepBeforePoll(remaining);
+          return false;
+        }
+        await sleepBeforePoll(wait.pollIntervalMs);
+        return !waitExpired();
+      };
+
       const startedWaiting = wait ? performance.now() : undefined;
       const waitExpired = () =>
         wait !== undefined && performance.now() - startedWaiting! >= wait.timeoutMs;
@@ -1224,7 +1248,6 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
             ),
             resultSignal,
           );
-          break;
         } catch (err) {
           if (wait && (initialDeadlineSignal?.aborted || waitExpired()) && !signal?.aborted) {
             return toTerminalNotReadyOutput(run);
@@ -1244,14 +1267,7 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
             if (!wait) {
               return toPendingOutput({ ...run, status: 'running', is_active: true }, 'running');
             }
-            const remaining = wait.timeoutMs - (performance.now() - startedWaiting!);
-            if (remaining <= 0) return toTerminalNotReadyOutput(run);
-            if (remaining <= wait.pollIntervalMs) {
-              await sleepBeforePoll(remaining);
-              return toTerminalNotReadyOutput(run);
-            }
-            await sleepBeforePoll(wait.pollIntervalMs);
-            if (waitExpired()) return toTerminalNotReadyOutput(run);
+            if (!(await waitBeforeResultRetry())) return toTerminalNotReadyOutput(run);
             continue;
           }
         // 422: terminal failure — the body carries the run + structured error.
@@ -1287,7 +1303,6 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
             allowErrorDetails,
           });
         }
-      }
 
       // Enforce cancellation independently of client settlement behavior. An
       // injected client may ignore the signal and resolve after it fires.
@@ -1349,7 +1364,9 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
       assertMatchingRunIds(resultRun, ids, apiKey);
       assertKnownStatus(resultRun, ids);
       if (resultRun.status === 'queued' || resultRun.status === 'running') {
-        return toPendingOutput(resultRun, resultRun.status);
+        if (!wait) return toPendingOutput(resultRun, resultRun.status);
+        if (!(await waitBeforeResultRetry())) return toPendingOutput(resultRun, resultRun.status);
+        continue;
       }
       if (resultRun.status === 'failed' || resultRun.status === 'cancelled') {
         throw terminalFailure(resultRun, ids, undefined, apiKey, allowErrorDetails);
@@ -1377,6 +1394,7 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
         return toTerminalNotReadyOutput(resultRun);
       }
       return completed;
+      }
     },
   });
 }

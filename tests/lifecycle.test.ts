@@ -756,6 +756,45 @@ describe('result tool', () => {
     expect(out).toMatchObject({ ready: false, status: 'running' });
   });
 
+  it('retries an active successful result envelope within the bounded wait', async () => {
+    let resultCalls = 0;
+    const client = mockClient({
+      get: async () => makeRun({ status: 'completed', is_active: false }),
+      result: async () => {
+        resultCalls += 1;
+        if (resultCalls === 1) {
+          return { run: makeRun({ status: 'running', is_active: true }), output: makeTextResult().output };
+        }
+        return makeTextResult();
+      },
+    });
+    const out = await nimbleAgentRunResultTool({
+      ...cfg,
+      client,
+      wait: { timeoutMs: 250, pollIntervalMs: 100 },
+    }).execute!({ runId: RUN_ID }, CTX);
+    expect(out).toMatchObject({ ready: true, status: 'completed' });
+    expect(resultCalls).toBe(2);
+  });
+
+  it('stops retrying active successful result envelopes at the original deadline', async () => {
+    let resultCalls = 0;
+    const client = mockClient({
+      get: async () => makeRun({ status: 'completed', is_active: false }),
+      result: async () => {
+        resultCalls += 1;
+        return { run: makeRun({ status: 'running', is_active: true }), output: makeTextResult().output };
+      },
+    });
+    const out = await nimbleAgentRunResultTool({
+      ...cfg,
+      client,
+      wait: { timeoutMs: 50, pollIntervalMs: 100 },
+    }).execute!({ runId: RUN_ID }, CTX);
+    expect(out).toMatchObject({ ready: false, status: 'running', isActive: true });
+    expect(resultCalls).toBe(1);
+  });
+
   it.each([
     ['run id', { id: 'task_run_wrong' }],
     ['agent id', { web_search_agent_id: 'wsa_wrong' }],
