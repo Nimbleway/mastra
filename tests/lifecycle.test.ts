@@ -6,7 +6,11 @@ import {
   nimbleAgentStartRunTool,
 } from '../src/tools';
 import { NimbleAgentRunError, NimbleConfigError } from '../src/errors';
-import type { NimbleAgentRunCompletedOutput, NimbleAgentRunCreateBody } from '../src/schemas';
+import type {
+  NimbleAgentRunCompletedOutput,
+  NimbleAgentRunCreateBody,
+  NimbleAgentRunStatusOutput,
+} from '../src/schemas';
 import { nimbleAgentTrustSchema } from '../src/schemas';
 import {
   AGENT_ID,
@@ -285,6 +289,23 @@ describe('status tool', () => {
     }).execute!({ runId: RUN_ID }, { abortSignal: controller.signal } as never))
       .rejects.toMatchObject({ reason: 'request' });
   });
+
+  it('bounds and scrubs a multi-megabyte failed status detail', async () => {
+    const detail = `${'x'.repeat(4_090)}${TEST_API_KEY}${'y'.repeat(2_000_000)}`;
+    const out = await nimbleAgentRunStatusTool({
+      agentId: AGENT_ID,
+      apiKey: TEST_API_KEY,
+      client: mockClient({
+        get: async () => makeRun({
+          status: 'failed', is_active: false, error: { message: detail, ref_id: RUN_ID },
+        }),
+      }),
+    }).execute!({ runId: RUN_ID }, CTX) as NimbleAgentRunStatusOutput;
+    expect(out.error?.message).toContain('[redacted]');
+    expect(out.error?.message).toContain('[truncated]');
+    expect(out.error?.message).not.toContain(TEST_API_KEY);
+    expect(out.error?.message.length).toBeLessThan(4_300);
+  });
 });
 
 describe('result tool', () => {
@@ -534,6 +555,27 @@ describe('result tool', () => {
     )) as NimbleAgentRunCompletedOutput;
     expect(lengthReads).toBe(1);
     expect(out.output).toMatchObject({ type: 'json', json: [1] });
+  });
+
+  it('snapshots deeply nested valid JSON without using the JavaScript call stack', async () => {
+    const depth = 20_000;
+    const root: Record<string, unknown> = {};
+    let cursor = root;
+    for (let index = 0; index < depth; index += 1) {
+      const child: Record<string, unknown> = {};
+      cursor.child = child;
+      cursor = child;
+    }
+    cursor.value = 'done';
+    const result = makeJsonResult();
+    result.output.content = root;
+    const out = await nimbleAgentRunResultTool({ ...cfg, client: mockClient({
+      get: async () => makeRun({ status: 'completed', is_active: false }),
+      result: async () => result,
+    }) }).execute!({ runId: RUN_ID }, CTX) as NimbleAgentRunCompletedOutput;
+    let copied = out.output.type === 'json' ? out.output.json as Record<string, unknown> : {};
+    for (let index = 0; index < depth; index += 1) copied = copied.child as Record<string, unknown>;
+    expect(copied.value).toBe('done');
   });
 
   it('rejects array proxies that replace a required index with an out-of-range index', async () => {

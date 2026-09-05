@@ -338,22 +338,39 @@ type PlainDataSnapshot = { ok: true; value: unknown } | { ok: false };
 function snapshotPlainData(value: unknown): PlainDataSnapshot {
   const copies = new WeakMap<object, object>();
   const active = new WeakSet<object>();
+  let root: unknown;
+  type Work =
+    | { kind: 'copy'; current: unknown; assign: (copied: unknown) => void }
+    | { kind: 'leave'; source: object };
+  const pending: Work[] = [{ kind: 'copy', current: value, assign: (copied) => { root = copied; } }];
 
-  const copy = (current: unknown): PlainDataSnapshot => {
-    if (
-      current === null ||
-      typeof current === 'string' ||
-      typeof current === 'boolean' ||
-      (typeof current === 'number' && Number.isFinite(current))
-    ) return { ok: true, value: current };
-    if (typeof current !== 'object') return { ok: false };
+  try {
+    while (pending.length > 0) {
+      const work = pending.pop()!;
+      if (work.kind === 'leave') {
+        active.delete(work.source);
+        continue;
+      }
+      const { current, assign } = work;
+      if (
+        current === null ||
+        typeof current === 'string' ||
+        typeof current === 'boolean' ||
+        (typeof current === 'number' && Number.isFinite(current))
+      ) {
+        assign(current);
+        continue;
+      }
+      if (typeof current !== 'object') return { ok: false };
 
-    const source = current as object;
-    if (active.has(source)) return { ok: false };
-    const existing = copies.get(source);
-    if (existing) return { ok: true, value: existing };
+      const source = current as object;
+      if (active.has(source)) return { ok: false };
+      const existing = copies.get(source);
+      if (existing) {
+        assign(existing);
+        continue;
+      }
 
-    try {
       const isArray = Array.isArray(source);
       const prototype = Object.getPrototypeOf(source);
       if (!isArray && prototype !== Object.prototype && prototype !== null) return { ok: false };
@@ -384,7 +401,10 @@ function snapshotPlainData(value: unknown): PlainDataSnapshot {
       const target: unknown[] | Record<string, unknown> = isArray ? [] : Object.create(null);
       copies.set(source, target);
       active.add(source);
-      for (const key of ownKeys) {
+      assign(target);
+      pending.push({ kind: 'leave', source });
+      for (let index = ownKeys.length - 1; index >= 0; index -= 1) {
+        const key = ownKeys[index]!;
         if (isArray && key === 'length') {
           Object.defineProperty(target, key, { value: arrayLength, writable: true });
           continue;
@@ -392,23 +412,22 @@ function snapshotPlainData(value: unknown): PlainDataSnapshot {
         if (typeof key !== 'string') return { ok: false };
         const descriptor = Object.getOwnPropertyDescriptor(source, key);
         if (!descriptor || !('value' in descriptor) || !descriptor.enumerable) return { ok: false };
-        const child = copy(descriptor.value);
-        if (!child.ok) return child;
-        Object.defineProperty(target, key, {
-          value: child.value,
-          enumerable: true,
-          configurable: true,
-          writable: true,
+        pending.push({
+          kind: 'copy',
+          current: descriptor.value,
+          assign: (copied) => Object.defineProperty(target, key, {
+            value: copied,
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          }),
         });
       }
-      active.delete(source);
-      return { ok: true, value: target };
-    } catch {
-      return { ok: false };
     }
-  };
-
-  return copy(value);
+    return { ok: true, value: root };
+  } catch {
+    return { ok: false };
+  }
 }
 
 function safeErrorReason(value: unknown): NimbleAgentRunErrorReason {
@@ -807,7 +826,7 @@ function toStatusOutput(
     ...(run.completed_at ? { completedAt: run.completed_at } : {}),
     // Server-reported error text is model-visible output — scrub it.
     ...(allowErrorDetails && run.error?.message
-      ? { error: { message: scrub(run.error.message, apiKey) } }
+      ? { error: { message: terminalErrorDetail(run.error.message, apiKey) } }
       : {}),
   };
 }
