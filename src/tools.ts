@@ -1028,6 +1028,11 @@ export function nimbleAgentRunStatusTool(config: NimbleAgentToolConfig = {}) {
         });
       }
       run = snapshotRun(run, { runId: input.runId, agentId }, apiKey);
+      if (signal?.aborted) {
+        throw toAgentError(signal.reason, {
+          verb: 'status check', runId: input.runId, agentId, apiKey, allowErrorDetails,
+        });
+      }
       assertKnownStatus(run, { runId: input.runId, agentId });
       return toStatusOutput(run, apiKey, allowErrorDetails);
     },
@@ -1079,7 +1084,9 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
             ),
             requestSignal,
           );
-          return snapshotRun(fetched, ids, apiKey);
+          const snapshot = snapshotRun(fetched, ids, apiKey);
+          if (requestSignal?.aborted) throw abortReason(requestSignal);
+          return snapshot;
         } catch (err) {
           throw toAgentError(err, {
             verb: 'status check',
@@ -1273,6 +1280,11 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
       }
 
       const resultSnapshot = snapshotPlainData(result);
+      if (signal?.aborted) {
+        throw toAgentError(signal.reason, {
+          verb: 'result fetch', ...ids, apiKey, allowErrorDetails,
+        });
+      }
       if (!resultSnapshot.ok || typeof resultSnapshot.value !== 'object' || resultSnapshot.value === null) {
         throw protocolError(ids);
       }

@@ -256,6 +256,20 @@ describe('status tool', () => {
     )).rejects.toMatchObject({ reason: 'request' });
     expect(calls).toBe(0);
   });
+
+  it('prioritizes cancellation triggered while snapshotting standalone status', async () => {
+    const controller = new AbortController();
+    const run = new Proxy(makeRun({ status: 'running' }), {
+      ownKeys(target) {
+        controller.abort(new Error('caller cancelled'));
+        return Reflect.ownKeys(target);
+      },
+    });
+    await expect(nimbleAgentRunStatusTool({
+      agentId: AGENT_ID, client: mockClient({ get: async () => run }),
+    }).execute!({ runId: RUN_ID }, { abortSignal: controller.signal } as never))
+      .rejects.toMatchObject({ reason: 'request' });
+  });
 });
 
 describe('result tool', () => {
@@ -289,6 +303,21 @@ describe('result tool', () => {
       { runId: RUN_ID }, { abortSignal: controller.signal } as never,
     )).rejects.toMatchObject({ reason: 'request' });
     expect(resultCalls).toBe(0);
+  });
+
+  it('prioritizes cancellation triggered while snapshotting a successful result', async () => {
+    const controller = new AbortController();
+    const result = new Proxy(makeTextResult(), {
+      ownKeys(target) {
+        controller.abort(new Error('caller cancelled'));
+        return Reflect.ownKeys(target);
+      },
+    });
+    await expect(nimbleAgentRunResultTool({ ...cfg, client: mockClient({
+      get: async () => makeRun({ status: 'completed', is_active: false }),
+      result: async () => result,
+    }) }).execute!({ runId: RUN_ID }, { abortSignal: controller.signal } as never))
+      .rejects.toMatchObject({ reason: 'request' });
   });
 
   it('returns { ready: false } while queued/running — never blocks by default', async () => {
