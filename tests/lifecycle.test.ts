@@ -567,6 +567,30 @@ describe('result tool', () => {
   });
 
   it.each(['failed', 'cancelled'] as const)(
+    'bounds and scrubs an oversized %s terminal detail before formatting',
+    async (status) => {
+      const oversized = `${'x'.repeat(4_090)}${TEST_API_KEY}${'y'.repeat(2_000_000)}`;
+      const err = await nimbleAgentRunResultTool({
+        ...cfg,
+        client: mockClient({
+          get: async () => makeRun({
+            status,
+            is_active: false,
+            error: { message: oversized, ref_id: RUN_ID },
+          }),
+        }),
+      }).execute!({ runId: RUN_ID }, CTX).catch(
+        (caught: unknown) => caught as NimbleAgentRunError,
+      ) as NimbleAgentRunError;
+      expect(err).toBeInstanceOf(NimbleAgentRunError);
+      expect(err.message).toContain('[redacted]');
+      expect(err.message).toContain('[truncated]');
+      expect(err.message).not.toContain(TEST_API_KEY);
+      expect(err.message.length).toBeLessThan(4_300);
+    },
+  );
+
+  it.each(['failed', 'cancelled'] as const)(
     'returns authoritative %s/not-ready when large terminal error formatting reaches the deadline',
     async (status) => {
       let reads = 0;

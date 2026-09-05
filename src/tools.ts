@@ -126,6 +126,24 @@ function scrub(text: string, apiKey: string | undefined): string {
   return apiKey && text.includes(apiKey) ? text.split(apiKey).join('[redacted]') : text;
 }
 
+const MAX_TERMINAL_ERROR_DETAIL_LENGTH = 4_096;
+
+/**
+ * Bound work on untrusted terminal messages before scrubbing/formatting them.
+ * The look-ahead catches a credential that begins just before the visible
+ * boundary; unusually long credentials suppress detail rather than exposing
+ * a partial value.
+ */
+function terminalErrorDetail(text: string, apiKey: string | undefined): string {
+  if (text.length <= MAX_TERMINAL_ERROR_DETAIL_LENGTH) return scrub(text, apiKey);
+  if (apiKey && apiKey.length > MAX_TERMINAL_ERROR_DETAIL_LENGTH) {
+    return '[server detail omitted: exceeded safe display limit]';
+  }
+  const lookAhead = apiKey ? apiKey.length - 1 : 0;
+  const bounded = text.slice(0, MAX_TERMINAL_ERROR_DETAIL_LENGTH + lookAhead);
+  return `${scrub(bounded, apiKey)}… [truncated]`;
+}
+
 function isErrorObject(value: unknown): value is Error {
   try {
     return value instanceof Error;
@@ -530,7 +548,7 @@ function terminalFailure(
   // Server-reported failure text is scrubbed like every other error surface —
   // a backend message that echoed credentials must not reach model output.
   const rawDetail = allowErrorDetails ? (serverMessage ?? run.error?.message) : undefined;
-  const detail = rawDetail === undefined ? undefined : scrub(rawDetail, apiKey);
+  const detail = rawDetail === undefined ? undefined : terminalErrorDetail(rawDetail, apiKey);
   return new NimbleAgentRunError(
     `Nimble agent run ${ids.runId} ${run.status}${detail ? `: ${detail}` : '.'}`,
     {
