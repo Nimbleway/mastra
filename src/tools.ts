@@ -1386,9 +1386,29 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
       // trusting only the earlier status snapshot: an eventually-inconsistent
       // or malformed body must not be stamped `completed` by toCompletedOutput.
       const resultRun = result.run;
-      if (typeof resultRun?.status !== 'string') throw protocolError(ids);
-      assertMatchingRunIds(resultRun, ids, apiKey);
-      assertKnownStatus(resultRun, ids);
+      try {
+        if (typeof resultRun?.status !== 'string') throw protocolError(ids);
+        assertMatchingRunIds(resultRun, ids, apiKey);
+        assertKnownStatus(resultRun, ids);
+      } catch (err) {
+        if (signal?.aborted) {
+          throw toAgentError(signal.reason, {
+            verb: 'result fetch', ...ids, apiKey, allowErrorDetails,
+          });
+        }
+        if (wait && (initialDeadlineSignal?.aborted || waitExpired())) {
+          return toTerminalNotReadyOutput(run);
+        }
+        throw err;
+      }
+      if (signal?.aborted) {
+        throw toAgentError(signal.reason, {
+          verb: 'result fetch', ...ids, apiKey, allowErrorDetails,
+        });
+      }
+      if (wait && (initialDeadlineSignal?.aborted || waitExpired())) {
+        return toTerminalNotReadyOutput(run);
+      }
       if (resultRun.status === 'queued' || resultRun.status === 'running') {
         if (!wait) return toPendingOutput(resultRun, resultRun.status);
         if (!(await waitBeforeResultRetry())) return toPendingOutput(resultRun, resultRun.status);

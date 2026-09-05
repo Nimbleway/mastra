@@ -793,6 +793,38 @@ describe('result tool', () => {
     expect(out).toMatchObject({ ready: false, status: 'running' });
   });
 
+  it.each(['failed', 'cancelled', 'malformed'] as const)(
+    'retains the prior completed snapshot when slow embedded %s run validation reaches the deadline',
+    async (kind) => {
+      let reads = 0;
+      const clock = vi.spyOn(performance, 'now').mockImplementation(() => {
+        reads += 1;
+        return reads < 6 ? 0 : 20;
+      });
+      try {
+        const out = await nimbleAgentRunResultTool({
+          ...cfg,
+          client: mockClient({
+            get: async () => makeRun({ status: 'completed', is_active: false }),
+            result: async () => ({
+              ...makeTextResult(),
+              run: makeRun({
+                status: kind === 'malformed' ? ('unexpected' as never) : kind,
+                is_active: false,
+              }),
+            }),
+          }),
+          wait: { timeoutMs: 10, pollIntervalMs: 100 },
+        }).execute!({ runId: RUN_ID }, CTX);
+        expect(out).toMatchObject({
+          ready: false, status: 'completed', runId: RUN_ID, agentId: AGENT_ID,
+        });
+      } finally {
+        clock.mockRestore();
+      }
+    },
+  );
+
   it('retries an active successful result envelope within the bounded wait', async () => {
     let resultCalls = 0;
     const client = mockClient({
