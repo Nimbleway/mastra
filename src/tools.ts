@@ -599,6 +599,7 @@ function forceAmbiguousCancelledCreate(
       reason: 'request',
       runId: failure.runId,
       agentId,
+      runStatus: failure.runStatus,
       status: failure.status,
       createOutcome: 'unknown',
       cause: failure.cause,

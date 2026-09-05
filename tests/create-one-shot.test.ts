@@ -95,11 +95,16 @@ describe('run creation is one-shot', () => {
   it('rechecks cancellation after sanitizing a hostile create error', async () => {
     const controller = new AbortController();
     let attempts = 0;
-    const hostile = Object.create(null) as Record<string, unknown>;
+    const hostile = new NimbleAgentRunError('rate limited', {
+      reason: 'request',
+      agentId: AGENT_ID,
+      runStatus: 'queued',
+      status: 429,
+      createOutcome: 'not-created',
+    });
     Object.defineProperties(hostile, {
-      status: { enumerable: true, value: 429 },
       message: {
-        enumerable: true,
+        configurable: true,
         get() {
           controller.abort(new Error('caller cancelled'));
           return 'rate limited';
@@ -122,7 +127,7 @@ describe('run creation is one-shot', () => {
       () => { throw new Error('expected failure'); },
       (error: unknown) => error as NimbleAgentRunError,
     );
-    expect(err).toMatchObject({ createOutcome: 'unknown', status: 429 });
+    expect(err).toMatchObject({ createOutcome: 'unknown', runStatus: 'queued', status: 429 });
     expect(err.message).toContain('Do not automatically start another run');
     expect(attempts).toBe(1);
   });
