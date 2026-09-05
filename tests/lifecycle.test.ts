@@ -953,7 +953,7 @@ describe('result tool', () => {
   });
 
   it.each(['failed', 'cancelled'] as const)(
-    'returns %s/not-ready when successful failure-envelope validation crosses the deadline',
+    'retains the prior completed snapshot when %s-envelope validation crosses the deadline',
     async (status) => {
       let reads = 0;
       const clock = vi.spyOn(performance, 'now').mockImplementation(() => {
@@ -972,7 +972,42 @@ describe('result tool', () => {
           }),
           wait: { timeoutMs: 10, pollIntervalMs: 100 },
         }).execute!({ runId: RUN_ID }, CTX);
-        expect(out).toMatchObject({ ready: false, status, isActive: false });
+        expect(out).toMatchObject({
+          ready: false, status: 'completed', isActive: false, runId: RUN_ID, agentId: AGENT_ID,
+        });
+      } finally {
+        clock.mockRestore();
+      }
+    },
+  );
+
+  it.each([
+    ['run id', { id: 'task_run_ffffffff-ffff-ffff-ffff-ffffffffffff' }],
+    ['agent id', { web_search_agent_id: 'wsa_ffffffff-ffff-4fff-8fff-ffffffffffff' }],
+  ] as const)(
+    'does not expose a mismatched %s when failure-envelope validation reaches the deadline',
+    async (_label, patch) => {
+      let reads = 0;
+      const clock = vi.spyOn(performance, 'now').mockImplementation(() => {
+        reads += 1;
+        return reads < 5 ? 0 : 20;
+      });
+      try {
+        const out = await nimbleAgentRunResultTool({
+          ...cfg,
+          client: mockClient({
+            get: async () => makeRun({ status: 'completed', is_active: false }),
+            result: async () => ({
+              ...makeFailedResult('foreign failure'),
+              run: makeRun({ status: 'failed', is_active: false, ...patch }),
+            }),
+          }),
+          wait: { timeoutMs: 10, pollIntervalMs: 100 },
+        }).execute!({ runId: RUN_ID }, CTX);
+        expect(out).toMatchObject({
+          ready: false, status: 'completed', runId: RUN_ID, agentId: AGENT_ID,
+        });
+        expect(JSON.stringify(out)).not.toContain('ffffffff');
       } finally {
         clock.mockRestore();
       }

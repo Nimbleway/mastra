@@ -1347,9 +1347,7 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
           });
         }
         if (wait && (initialDeadlineSignal?.aborted || waitExpired())) {
-          return failed && (failed.run.status === 'failed' || failed.run.status === 'cancelled')
-            ? toTerminalNotReadyOutput(failed.run)
-            : toTerminalNotReadyOutput(run);
+          return toTerminalNotReadyOutput(run);
         }
         if (
           !failed ||
@@ -1358,6 +1356,15 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
           throw protocolError(ids);
         }
         assertMatchingRunIds(failed.run, ids, apiKey);
+        assertKnownStatus(failed.run, ids);
+        if (signal?.aborted) {
+          throw toAgentError(signal.reason, {
+            verb: 'result fetch', ...ids, apiKey, allowErrorDetails,
+          });
+        }
+        if (wait && (initialDeadlineSignal?.aborted || waitExpired())) {
+          return toTerminalNotReadyOutput(run);
+        }
         throw terminalFailure(
           failed.run,
           ids,
