@@ -12,6 +12,7 @@ import {
   nimbleAgentStartRunInputSchema,
 } from '../src/schemas';
 import { NimbleAgentRunError, NimbleConfigError } from '../src/errors';
+import type { NimbleAgentRunCompletedOutput } from '../src/schemas';
 import {
   AGENT_ID,
   CTX,
@@ -299,6 +300,24 @@ describe('the API key stays server-only', () => {
     );
     expect(err).toMatchObject({ reason: 'protocol', runId: RUN_ID, agentId: AGENT_ID });
     expect(inspect(err, { depth: 20 })).not.toContain(FAKE_KEY);
+  });
+
+  it('preserves an own enumerable __proto__ trust extension', async () => {
+    const trust = Object.assign(Object.create(null), TRUST);
+    Object.defineProperty(trust, '__proto__', { enumerable: true, value: 'future-value' });
+    const result = makeTextResult();
+    result.output.trust = trust;
+    const output = await nimbleAgentRunResultTool({
+      agentId: AGENT_ID,
+      client: mockClient({
+        get: async () => makeRun({ status: 'completed', is_active: false }),
+        result: async () => result,
+      }),
+    }).execute!({ runId: RUN_ID }, CTX) as NimbleAgentRunCompletedOutput;
+    expect(output.ready).toBe(true);
+    if (!output.ready) throw new Error('expected completed output');
+    expect(Object.prototype.hasOwnProperty.call(output.output.trust, '__proto__')).toBe(true);
+    expect((output.output.trust as Record<string, unknown>)['__proto__']).toBe('future-value');
   });
 
   it('accepts deeply nested structured output when it contains no credential', async () => {

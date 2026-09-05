@@ -29,6 +29,7 @@ import type {
   NimbleAgentStartRunOutput,
   NimbleAgentToolConfig,
   NimbleAgentToolsConfig,
+  NimbleAgentTrust,
   NimbleAgentWaitOptions,
 } from './schemas';
 import { NimbleAgentRunError, NimbleConfigError } from './errors';
@@ -809,10 +810,10 @@ function toAgentOutput(
   }
   const kind = raw.type ?? (typeof raw.content === 'string' ? 'text' : 'json');
   if (kind === 'text' && typeof raw.content === 'string') {
-    return { type: 'text', text: raw.content, trust: parsedTrust.data };
+    return { type: 'text', text: raw.content, trust: raw.trust as NimbleAgentTrust };
   }
   if (kind === 'json' && typeof raw.content === 'object' && raw.content !== null) {
-    return { type: 'json', json: raw.content, trust: parsedTrust.data };
+    return { type: 'json', json: raw.content, trust: raw.trust as NimbleAgentTrust };
   }
   throw protocolError(ids, 'completed');
 }
@@ -1001,10 +1002,13 @@ export function nimbleAgentRunStatusTool(config: NimbleAgentToolConfig = {}) {
 
       let run: NimbleAgentRawRun;
       try {
-        run = await client.agents.runs.get(
-          input.runId,
-          { agent_id: agentId },
-          requestOptions(signal),
+        run = await abortable(
+          client.agents.runs.get(
+            input.runId,
+            { agent_id: agentId },
+            requestOptions(signal),
+          ),
+          signal,
         );
       } catch (err) {
         throw toAgentError(err, {

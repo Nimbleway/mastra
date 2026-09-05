@@ -124,7 +124,7 @@ export const nimbleAgentTrustClaimSchema = z
  * from the API (snake_case preserved) so citation markers stay aligned with
  * the answer and future fields survive.
  */
-export const nimbleAgentTrustSchema = z
+const nimbleAgentTrustValidationSchema = z
   .object({
     confidence: trustConfidenceSchema,
     reasoning: z.string(),
@@ -132,6 +132,11 @@ export const nimbleAgentTrustSchema = z
     claims: z.array(nimbleAgentTrustClaimSchema),
   })
   .passthrough();
+
+export const nimbleAgentTrustSchema = z.custom<z.infer<typeof nimbleAgentTrustValidationSchema>>(
+  (value) => nimbleAgentTrustValidationSchema.safeParse(value).success,
+  'Invalid Nimble agent trust metadata',
+);
 
 export type NimbleAgentTrust = z.infer<typeof nimbleAgentTrustSchema>;
 

@@ -234,6 +234,17 @@ describe('status tool', () => {
       ),
     ).rejects.toMatchObject({ reason: 'protocol', runId: RUN_ID, agentId: AGENT_ID });
   });
+
+  it('cancels a standalone status read when an injected client never settles', async () => {
+    const controller = new AbortController();
+    const client = mockClient({ get: async () => await new Promise(() => undefined) });
+    const pending = nimbleAgentRunStatusTool({ agentId: AGENT_ID, client }).execute!(
+      { runId: RUN_ID },
+      { abortSignal: controller.signal } as never,
+    );
+    controller.abort(new Error('caller cancelled'));
+    await expect(pending).rejects.toMatchObject({ reason: 'request', runId: RUN_ID });
+  });
 });
 
 describe('result tool', () => {
