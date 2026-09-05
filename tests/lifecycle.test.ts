@@ -652,6 +652,28 @@ describe('result tool', () => {
     expect(err.message.length).toBeLessThan(4_300);
   });
 
+  it('never backfills beyond the raw cap after earlier redactions contract output', async () => {
+    const key = '12345678901234567890';
+    const prefix = `${key}${'a'.repeat(100)}${key}`;
+    const detail = `${prefix}${'b'.repeat(4_096 - prefix.length)}${key}${'c'.repeat(100)}`;
+    const err = await nimbleAgentRunResultTool({
+      agentId: AGENT_ID,
+      apiKey: key,
+      client: mockClient({
+        get: async () => makeRun({
+          status: 'failed',
+          is_active: false,
+          error: { message: detail, ref_id: RUN_ID },
+        }),
+      }),
+    }).execute!({ runId: RUN_ID }, CTX).catch(
+      (caught: unknown) => caught as NimbleAgentRunError,
+    ) as NimbleAgentRunError;
+    expect(err.message).not.toContain(key);
+    expect(err.message.match(/\[redacted\]/g)).toHaveLength(2);
+    expect(err.message.length).toBeLessThan(4_300);
+  });
+
   it.each(['failed', 'cancelled'] as const)(
     'returns authoritative %s/not-ready when large terminal error formatting reaches the deadline',
     async (status) => {

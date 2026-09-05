@@ -137,7 +137,10 @@ function redactTerminalWindow(text: string, apiKey: string): string {
     if (match < 0 || match >= MAX_TERMINAL_ERROR_DETAIL_LENGTH) {
       output += text.slice(
         cursor,
-        cursor + MAX_TERMINAL_ERROR_DETAIL_LENGTH - output.length,
+        Math.min(
+          MAX_TERMINAL_ERROR_DETAIL_LENGTH,
+          cursor + MAX_TERMINAL_ERROR_DETAIL_LENGTH - output.length,
+        ),
       );
       break;
     }
