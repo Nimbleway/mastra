@@ -1208,7 +1208,11 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
             }
             const remaining = wait.timeoutMs - (performance.now() - startedWaiting!);
             if (remaining <= 0) return toTerminalNotReadyOutput(run);
-            await sleepBeforePoll(Math.min(wait.pollIntervalMs, remaining));
+            if (remaining <= wait.pollIntervalMs) {
+              await sleepBeforePoll(remaining);
+              return toTerminalNotReadyOutput(run);
+            }
+            await sleepBeforePoll(wait.pollIntervalMs);
             if (waitExpired()) return toTerminalNotReadyOutput(run);
             continue;
           }
