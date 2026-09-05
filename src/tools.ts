@@ -1209,6 +1209,7 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
             const remaining = wait.timeoutMs - (performance.now() - startedWaiting!);
             if (remaining <= 0) return toTerminalNotReadyOutput(run);
             await sleepBeforePoll(Math.min(wait.pollIntervalMs, remaining));
+            if (waitExpired()) return toTerminalNotReadyOutput(run);
             continue;
           }
         // 422: terminal failure — the body carries the run + structured error.

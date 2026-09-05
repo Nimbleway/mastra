@@ -424,6 +424,25 @@ describe('result tool', () => {
     expect(performance.now() - started).toBeLessThan(500);
   });
 
+  it('does not invoke result again when the retry sleep consumes the deadline', async () => {
+    let resultCalls = 0;
+    const client = mockClient({
+      get: async () => makeRun({ status: 'completed', is_active: false }),
+      result: async () => {
+        resultCalls += 1;
+        throw httpError(409, { detail: 'still active' });
+      },
+    });
+    await expect(
+      nimbleAgentRunResultTool({
+        ...cfg,
+        client,
+        wait: { timeoutMs: 50, pollIntervalMs: 100 },
+      }).execute!({ runId: RUN_ID }, CTX),
+    ).resolves.toMatchObject({ ready: false, status: 'completed' });
+    expect(resultCalls).toBe(1);
+  });
+
   it('maps a 422 with a bare failed body to a terminal failure with the server message', async () => {
     const client = mockClient({
       get: async () => makeRun({ status: 'completed', is_active: false }),
