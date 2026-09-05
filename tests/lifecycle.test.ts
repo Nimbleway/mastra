@@ -590,6 +590,49 @@ describe('result tool', () => {
     },
   );
 
+  it.each([
+    ['before', 4_095, true],
+    ['at', 4_096, false],
+    ['after', 4_097, false],
+  ] as const)('keeps credential look-ahead private when a key starts %s the cap', async (_, offset, redacted) => {
+    const detail = `${'x'.repeat(offset)}${TEST_API_KEY}${'y'.repeat(8_192)}`;
+    const err = await nimbleAgentRunResultTool({
+      ...cfg,
+      client: mockClient({
+        get: async () => makeRun({
+          status: 'failed',
+          is_active: false,
+          error: { message: detail, ref_id: RUN_ID },
+        }),
+      }),
+    }).execute!({ runId: RUN_ID }, CTX).catch(
+      (caught: unknown) => caught as NimbleAgentRunError,
+    ) as NimbleAgentRunError;
+    expect(err.message).not.toContain(TEST_API_KEY);
+    expect(err.message.includes('[redacted]')).toBe(redacted);
+    expect(err.message.length).toBeLessThan(4_300);
+  });
+
+  it('omits oversized terminal detail when the configured credential itself exceeds the cap', async () => {
+    const longKey = `key-${'s'.repeat(5_000)}`;
+    const err = await nimbleAgentRunResultTool({
+      agentId: AGENT_ID,
+      apiKey: longKey,
+      client: mockClient({
+        get: async () => makeRun({
+          status: 'failed',
+          is_active: false,
+          error: { message: `${'x'.repeat(4_000)}${longKey}`, ref_id: RUN_ID },
+        }),
+      }),
+    }).execute!({ runId: RUN_ID }, CTX).catch(
+      (caught: unknown) => caught as NimbleAgentRunError,
+    ) as NimbleAgentRunError;
+    expect(err.message).toContain('[server detail omitted: exceeded safe display limit]');
+    expect(err.message).not.toContain(longKey.slice(0, 128));
+    expect(err.message.length).toBeLessThan(300);
+  });
+
   it.each(['failed', 'cancelled'] as const)(
     'returns authoritative %s/not-ready when large terminal error formatting reaches the deadline',
     async (status) => {

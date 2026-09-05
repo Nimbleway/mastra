@@ -139,9 +139,17 @@ function terminalErrorDetail(text: string, apiKey: string | undefined): string {
   if (apiKey && apiKey.length > MAX_TERMINAL_ERROR_DETAIL_LENGTH) {
     return '[server detail omitted: exceeded safe display limit]';
   }
-  const lookAhead = apiKey ? apiKey.length - 1 : 0;
-  const bounded = text.slice(0, MAX_TERMINAL_ERROR_DETAIL_LENGTH + lookAhead);
-  return `${scrub(bounded, apiKey)}… [truncated]`;
+  const visible = text.slice(0, MAX_TERMINAL_ERROR_DETAIL_LENGTH);
+  if (!apiKey) return `${visible}… [truncated]`;
+  const probe = text.slice(0, MAX_TERMINAL_ERROR_DETAIL_LENGTH + apiKey.length);
+  const crossingStart = probe.indexOf(
+    apiKey,
+    Math.max(0, MAX_TERMINAL_ERROR_DETAIL_LENGTH - apiKey.length + 1),
+  );
+  const safeVisible = crossingStart >= 0 && crossingStart < MAX_TERMINAL_ERROR_DETAIL_LENGTH
+    ? `${scrub(text.slice(0, crossingStart), apiKey)}[redacted]`
+    : scrub(visible, apiKey);
+  return `${safeVisible}… [truncated]`;
 }
 
 function isErrorObject(value: unknown): value is Error {
