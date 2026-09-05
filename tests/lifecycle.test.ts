@@ -272,6 +272,25 @@ describe('result tool', () => {
     expect(calls).toBe(0);
   });
 
+  it('does not invoke result when status snapshotting aborts the caller', async () => {
+    const controller = new AbortController();
+    let resultCalls = 0;
+    const run = new Proxy(makeRun({ status: 'completed', is_active: false }), {
+      ownKeys(target) {
+        controller.abort(new Error('caller cancelled'));
+        return Reflect.ownKeys(target);
+      },
+    });
+    const client = mockClient({
+      get: async () => run,
+      result: async () => { resultCalls += 1; return makeTextResult(); },
+    });
+    await expect(nimbleAgentRunResultTool({ ...cfg, client }).execute!(
+      { runId: RUN_ID }, { abortSignal: controller.signal } as never,
+    )).rejects.toMatchObject({ reason: 'request' });
+    expect(resultCalls).toBe(0);
+  });
+
   it('returns { ready: false } while queued/running — never blocks by default', async () => {
     for (const status of ['queued', 'running'] as const) {
       const client = mockClient({ get: async () => makeRun({ status }) });

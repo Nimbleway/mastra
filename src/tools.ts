@@ -1199,13 +1199,15 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
       let result: NimbleAgentRawResult | NimbleAgentRawFailedResult;
       while (true) {
         try {
+          const resultSignal = wait ? initialSignal : signal;
+          if (resultSignal?.aborted) throw abortReason(resultSignal);
           result = await abortable(
             client.agents.runs.result(
               input.runId,
               { agent_id: agentId },
-              requestOptions(wait ? initialSignal : signal),
+            requestOptions(resultSignal),
             ),
-            wait ? initialSignal : signal,
+            resultSignal,
           );
           break;
         } catch (err) {
