@@ -1036,7 +1036,7 @@ describe('createNimbleAgentTools (convenience factory)', () => {
     vi.unstubAllEnvs();
   });
 
-  it.each(['not-an-agent', FAKE_KEY])('rejects unsafe agent id %s before any request', async (agentId) => {
+  it.each(['not-an-agent', 'wsa_foo', 'wsa_not-a-uuid', FAKE_KEY])('rejects unsafe agent id %s before any request', async (agentId) => {
     const fetchMock = vi.fn(async () => jsonResponse(500, {}));
     const err = await nimbleAgentStartRunTool({
       agentId,

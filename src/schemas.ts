@@ -144,13 +144,16 @@ export type NimbleAgentTrust = z.infer<typeof nimbleAgentTrustSchema>;
 
 const effortSchema = z.enum(NIMBLE_AGENT_EFFORTS);
 const lifecycleStatusSchema = z.enum(NIMBLE_AGENT_RUN_STATUSES);
+const agentIdSchema = z.string().regex(
+  /^wsa_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+);
 
 /** Output of the start-run tool: the handle needed to resume later. */
 export const nimbleAgentStartRunOutputSchema = z.object({
   /** The real run ID (`task_run_<uuid>`) — pass to the status/result tools. */
   runId: z.string(),
   /** The agent instance the run belongs to (`web_search_agent_id`). */
-  agentId: z.string(),
+  agentId: agentIdSchema,
   /** Interaction ID (conversation-continuation handle). */
   interactionId: z.string(),
   status: lifecycleStatusSchema,
@@ -163,7 +166,7 @@ export type NimbleAgentStartRunOutput = z.infer<typeof nimbleAgentStartRunOutput
 /** Output of the status tool: a point-in-time run snapshot. */
 export const nimbleAgentRunStatusOutputSchema = z.object({
   runId: z.string(),
-  agentId: z.string(),
+  agentId: agentIdSchema,
   status: lifecycleStatusSchema,
   /** True while the run is still queued or running. */
   isActive: z.boolean(),
@@ -182,7 +185,7 @@ export const nimbleAgentRunPendingOutputSchema = z.union([
   z.object({
     ready: z.literal(false),
     runId: z.string(),
-    agentId: z.string(),
+    agentId: agentIdSchema,
     status: z.enum(['queued', 'running']),
     isActive: z.literal(true),
     effort: effortSchema,
@@ -192,7 +195,7 @@ export const nimbleAgentRunPendingOutputSchema = z.union([
   z.object({
     ready: z.literal(false),
     runId: z.string(),
-    agentId: z.string(),
+    agentId: agentIdSchema,
     status: z.enum(['completed', 'failed', 'cancelled']),
     isActive: z.literal(false),
     effort: effortSchema,
@@ -203,7 +206,7 @@ export const nimbleAgentRunPendingOutputSchema = z.union([
   z.object({
     ready: z.literal(false),
     runId: z.string(),
-    agentId: z.string(),
+    agentId: agentIdSchema,
     status: z.literal('unknown'),
   }),
 ]);
@@ -226,7 +229,7 @@ export type NimbleAgentOutput = z.infer<typeof nimbleAgentOutputSchema>;
 export const nimbleAgentRunCompletedOutputSchema = z.object({
   ready: z.literal(true),
   runId: z.string(),
-  agentId: z.string(),
+  agentId: agentIdSchema,
   status: z.literal('completed'),
   effort: effortSchema,
   createdAt: z.string(),

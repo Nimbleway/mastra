@@ -545,8 +545,8 @@ function resolveAgentContext(config: NimbleAgentToolConfig, factory: string): Ag
         'Create an agent instance once via the Nimble console or POST /v2/agents.',
     );
   }
-  if (!/^wsa_[A-Za-z0-9_-]+$/.test(agentId)) {
-    throw new NimbleConfigError('Invalid Nimble agent id: expected a wsa_ identifier.');
+  if (!/^wsa_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(agentId)) {
+    throw new NimbleConfigError('Invalid Nimble agent id: expected wsa_<uuid>.');
   }
   if (config.client) {
     // Only an explicitly paired key can be assumed to belong to an injected
@@ -1009,6 +1009,7 @@ export function nimbleAgentRunStatusTool(config: NimbleAgentToolConfig = {}) {
 
       let run: NimbleAgentRawRun;
       try {
+        if (signal?.aborted) throw abortReason(signal);
         run = await abortable(
           client.agents.runs.get(
             input.runId,
@@ -1069,6 +1070,7 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
 
       const getRun = async (requestSignal = signal): Promise<NimbleAgentRawRun> => {
         try {
+          if (requestSignal?.aborted) throw abortReason(requestSignal);
           const fetched = await abortable(
             client.agents.runs.get(
               input.runId,

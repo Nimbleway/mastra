@@ -44,7 +44,7 @@ describe('start tool', () => {
       create: async () => makeRun({ web_search_agent_id: '' }),
     });
     await expect(
-      nimbleAgentStartRunTool({ agentId: 'wsa_configured', client }).execute!(
+      nimbleAgentStartRunTool({ agentId: AGENT_ID, client }).execute!(
         { task: 't' },
         CTX,
       ),
@@ -54,11 +54,11 @@ describe('start tool', () => {
   it('fails closed when create returns a different agent id than requested', async () => {
     const client = mockClient({ create: async () => makeRun() });
     await expect(
-      nimbleAgentStartRunTool({ agentId: 'wsa_configured', client }).execute!(
+      nimbleAgentStartRunTool({ agentId: 'wsa_99999999-8888-7777-6666-555555555555', client }).execute!(
         { task: 't' },
         CTX,
       ),
-    ).rejects.toMatchObject({ reason: 'protocol', agentId: 'wsa_configured' });
+    ).rejects.toMatchObject({ reason: 'protocol', agentId: 'wsa_99999999-8888-7777-6666-555555555555' });
   });
 
   it('clamps model-chosen effort to the cap but not developer effort', async () => {
@@ -245,10 +245,32 @@ describe('status tool', () => {
     controller.abort(new Error('caller cancelled'));
     await expect(pending).rejects.toMatchObject({ reason: 'request', runId: RUN_ID });
   });
+
+  it('does not invoke standalone status get for a pre-aborted caller', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('caller cancelled'));
+    let calls = 0;
+    const client = mockClient({ get: async () => { calls += 1; return makeRun(); } });
+    await expect(nimbleAgentRunStatusTool({ agentId: AGENT_ID, client }).execute!(
+      { runId: RUN_ID }, { abortSignal: controller.signal } as never,
+    )).rejects.toMatchObject({ reason: 'request' });
+    expect(calls).toBe(0);
+  });
 });
 
 describe('result tool', () => {
   const cfg = { agentId: AGENT_ID, apiKey: TEST_API_KEY };
+
+  it('does not invoke initial status get for a pre-aborted caller', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('caller cancelled'));
+    let calls = 0;
+    const client = mockClient({ get: async () => { calls += 1; return makeRun(); } });
+    await expect(nimbleAgentRunResultTool({ ...cfg, client }).execute!(
+      { runId: RUN_ID }, { abortSignal: controller.signal } as never,
+    )).rejects.toMatchObject({ reason: 'request' });
+    expect(calls).toBe(0);
+  });
 
   it('returns { ready: false } while queued/running — never blocks by default', async () => {
     for (const status of ['queued', 'running'] as const) {
