@@ -662,6 +662,40 @@ describe('result tool', () => {
     ).rejects.toMatchObject({ reason: 'failed', message: expect.stringContaining('wrapped failure') });
   });
 
+  it.each(['failed', 'cancelled'] as const)(
+    'retains the prior completed snapshot when slow valid 422 %s identity validation reaches the deadline',
+    async (status) => {
+      let reads = 0;
+      const clock = vi.spyOn(performance, 'now').mockImplementation(() => {
+        reads += 1;
+        return reads < 6 ? 0 : 20;
+      });
+      const failed = {
+        ...makeFailedResult('late terminal failure'),
+        run: makeRun({
+          status,
+          is_active: false,
+          future_graph: Array.from({ length: 128 }, (_, index) => ({ index, value: `safe-${index}` })),
+        } as never),
+      };
+      try {
+        const out = await nimbleAgentRunResultTool({
+          ...cfg,
+          client: mockClient({
+            get: async () => makeRun({ status: 'completed', is_active: false }),
+            result: async () => { throw httpError(422, failed); },
+          }),
+          wait: { timeoutMs: 10, pollIntervalMs: 100 },
+        }).execute!({ runId: RUN_ID }, CTX);
+        expect(out).toMatchObject({
+          ready: false, status: 'completed', runId: RUN_ID, agentId: AGENT_ID,
+        });
+      } finally {
+        clock.mockRestore();
+      }
+    },
+  );
+
   it.each([undefined, 42])(
     'rejects a 422 failed envelope with invalid error.ref_id %s',
     async (refId) => {

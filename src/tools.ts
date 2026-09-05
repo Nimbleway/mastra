@@ -1283,6 +1283,14 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
           }
           if (failed) {
             assertMatchingRunIds(failed.run, ids, apiKey);
+            if (signal?.aborted) {
+              throw toAgentError(signal.reason, {
+                verb: 'result fetch', ...ids, apiKey, allowErrorDetails,
+              });
+            }
+            if (wait && (initialDeadlineSignal?.aborted || waitExpired())) {
+              return toTerminalNotReadyOutput(run);
+            }
             if (failed.run.status !== 'failed' && failed.run.status !== 'cancelled') {
               throw protocolError(ids);
             }
