@@ -201,15 +201,15 @@ function sanitizeCause(err: unknown, apiKey: string | undefined): unknown {
   let stack: string | undefined;
   try {
     const value = original?.message;
-    message = scrub(typeof value === 'string' ? value : String(err), apiKey);
+    message = terminalErrorDetail(typeof value === 'string' ? value : String(err), apiKey);
   } catch { /* keep safe default */ }
   try {
     const value = original?.name;
-    name = scrub(typeof value === 'string' ? value : 'Error', apiKey);
+    name = terminalErrorDetail(typeof value === 'string' ? value : 'Error', apiKey);
   } catch { /* keep safe default */ }
   try {
     const value = original?.stack;
-    if (typeof value === 'string') stack = scrub(value, apiKey);
+    if (typeof value === 'string') stack = terminalErrorDetail(value, apiKey);
   } catch { /* omit unsafe stack */ }
   const copy = new Error(message);
   copy.name = name;
@@ -244,9 +244,9 @@ function safeErrorProperty(err: unknown, key: string): unknown {
 
 function safeErrorMessage(err: unknown, apiKey: string | undefined): string {
   const message = safeErrorProperty(err, 'message');
-  if (typeof message === 'string') return scrub(message, apiKey);
+  if (typeof message === 'string') return terminalErrorDetail(message, apiKey);
   try {
-    return scrub(String(err), apiKey);
+    return terminalErrorDetail(String(err), apiKey);
   } catch {
     return 'Untrusted error details withheld';
   }

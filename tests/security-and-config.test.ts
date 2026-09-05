@@ -102,6 +102,40 @@ describe('the API key stays server-only', () => {
     expect(inspect(err, { depth: 10 })).not.toContain(FAKE_KEY);
   });
 
+  it.each(['start', 'status', 'result'] as const)(
+    'bounds and scrubs a multi-megabyte %s request failure and its retained cause',
+    async (operation) => {
+      const hostile = new Error(`${'request detail '.repeat(180_000)}${FAKE_KEY}`);
+      hostile.name = `${'hostile '.repeat(180_000)}${FAKE_KEY}`;
+      hostile.stack = `${'stack detail '.repeat(180_000)}${FAKE_KEY}`;
+      const client = mockClient({
+        create: async () => { throw hostile; },
+        get: async () => {
+          if (operation === 'result') return makeRun({ status: 'completed', is_active: false });
+          throw hostile;
+        },
+        result: async () => { throw hostile; },
+      });
+      const config = { agentId: AGENT_ID, apiKey: FAKE_KEY, client };
+      const pending = operation === 'start'
+        ? nimbleAgentStartRunTool(config).execute!({ task: 't' }, CTX)
+        : operation === 'status'
+          ? nimbleAgentRunStatusTool(config).execute!({ runId: RUN_ID }, CTX)
+          : nimbleAgentRunResultTool(config).execute!({ runId: RUN_ID }, CTX);
+      const err = await pending.then(
+        () => { throw new Error('expected failure'); },
+        (caught: unknown) => caught as NimbleAgentRunError,
+      );
+      const rendered = [String(err), JSON.stringify(err), inspect(err, { depth: 10 })];
+      for (const value of rendered) {
+        expect(value).not.toContain(FAKE_KEY);
+        expect(value.length).toBeLessThan(20_000);
+      }
+      expect(err.message).toContain('[truncated]');
+      expect(err.cause).toBeInstanceOf(Error);
+    },
+  );
+
   it('never appears in tool outputs', async () => {
     const client = mockClient({
       get: async () => makeRun({ status: 'completed', is_active: false }),
