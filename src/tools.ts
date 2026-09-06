@@ -631,16 +631,17 @@ function terminalFailure(
 }
 
 function resolveAgentContext(config: NimbleAgentToolConfig, factory: string): AgentContext {
-  const agentId = config.agentId ?? process.env.NIMBLE_AGENT_ID;
-  if (!agentId) {
+  const configuredAgentId = config.agentId ?? process.env.NIMBLE_AGENT_ID;
+  if (!configuredAgentId) {
     throw new NimbleConfigError(
       `Missing Nimble agent id: set NIMBLE_AGENT_ID or pass { agentId } to ${factory}(). ` +
         'Create an agent instance once via the Nimble console or POST /v2/agents.',
     );
   }
-  if (!/^wsa_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(agentId)) {
+  if (!/^wsa_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(configuredAgentId)) {
     throw new NimbleConfigError('Invalid Nimble agent id: expected wsa_<uuid>.');
   }
+  const agentId = configuredAgentId.toLowerCase();
   if (config.client) {
     // Only an explicitly paired key can be assumed to belong to an injected
     // client. An ambient NIMBLE_API_KEY may describe a different client and

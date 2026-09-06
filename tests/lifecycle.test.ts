@@ -44,6 +44,21 @@ describe('start tool', () => {
     });
   });
 
+  it('canonicalizes a case-insensitive agent id before create and retains the run handle', async () => {
+    const configuredAgentId = AGENT_ID.toUpperCase();
+    const client = mockClient({
+      create: async (agentId) => {
+        expect(agentId).toBe(AGENT_ID);
+        return makeRun();
+      },
+    });
+    const out = await nimbleAgentStartRunTool({ agentId: configuredAgentId, client }).execute!(
+      { task: 't' },
+      CTX,
+    );
+    expect(out).toMatchObject({ runId: RUN_ID, agentId: AGENT_ID });
+  });
+
   it('rejects a create response with a missing authoritative agent id', async () => {
     const client = mockClient({
       create: async () => makeRun({ web_search_agent_id: '' }),

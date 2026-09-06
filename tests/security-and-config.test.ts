@@ -972,6 +972,39 @@ describe('the API key stays server-only', () => {
 });
 
 describe('trust metadata passthrough', () => {
+  it('preserves a completed result when provider-owned trust vocabularies expand', async () => {
+    const result = makeTextResult();
+    result.output.trust = structuredClone(result.output.trust);
+    result.output.trust.confidence = 'very_high';
+    result.output.trust.sources[0]!.type = 'reference';
+    result.output.trust.sources[0]!.source_category = 'reference';
+    result.output.trust.claims[0]!.confidence = 'very_high';
+    result.output.trust.claims[0]!.citations[0]!.source_type = 'reference';
+    result.output.trust.claims[0]!.citations[0]!.source_category = 'reference';
+
+    const out = await nimbleAgentRunResultTool({
+      agentId: AGENT_ID,
+      client: mockClient({
+        get: async () => makeRun({ status: 'completed', is_active: false }),
+        result: async () => result,
+      }),
+    }).execute!({ runId: RUN_ID }, CTX);
+
+    expect(out).toMatchObject({
+      ready: true,
+      output: {
+        trust: {
+          confidence: 'very_high',
+          sources: [{ type: 'reference', source_category: 'reference' }],
+          claims: [{
+            confidence: 'very_high',
+            citations: [{ source_type: 'reference', source_category: 'reference' }],
+          }],
+        },
+      },
+    });
+  });
+
   it('preserves source intent independently from source category', () => {
     const client = makeTextResult();
     client.output.trust.sources[0]!.source_intent = 'informational';

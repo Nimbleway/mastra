@@ -64,16 +64,12 @@ export type NimbleAgentRunLifecycleStatus = (typeof NIMBLE_AGENT_RUN_STATUSES)[n
 
 // ── Trust metadata (zod, passthrough so future fields survive verbatim) ────
 
-const trustConfidenceSchema = z.enum(['high', 'medium', 'low', 'pre_existing']);
-const sourceTypeSchema = z.enum(['primary', 'secondary']);
-const sourceCategorySchema = z.enum([
-  'official',
-  'news',
-  'social',
-  'academic',
-  'aggregator',
-  'other',
-]);
+// Trust vocabularies are provider-owned and may expand independently of this
+// package. Keep known fields typed as strings so a new value never discards an
+// otherwise completed, billed result.
+const trustConfidenceSchema = z.string();
+const sourceTypeSchema = z.string();
+const sourceCategorySchema = z.string();
 // Agent API intent values describe why a source was selected (for example,
 // "informational"), not the source's category. Keep this distinct and
 // forward-compatible with newly introduced intent values.
