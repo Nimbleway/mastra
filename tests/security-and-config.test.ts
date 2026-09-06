@@ -959,6 +959,27 @@ describe('the API key stays server-only', () => {
     expect(inspect(err, { depth: 10 })).not.toContain(FAKE_KEY);
   });
 
+  it('drops oversized arbitrary run-status metadata from injected errors', async () => {
+    const oversizedStatus = `future-${'x'.repeat(2_000_000)}`;
+    const malformed = new NimbleAgentRunError('request failed', {
+      reason: 'request',
+      runStatus: oversizedStatus,
+    });
+    const err = await nimbleAgentRunStatusTool({
+      agentId: AGENT_ID,
+      apiKey: FAKE_KEY,
+      client: mockClient({ get: async () => { throw malformed; } }),
+    }).execute!({ runId: RUN_ID }, CTX).then(
+      () => { throw new Error('expected failure'); },
+      (error: unknown) => error as NimbleAgentRunError,
+    );
+
+    expect(err.runStatus).toBeUndefined();
+    expect(String(err).length).toBeLessThan(5_000);
+    expect(JSON.stringify(err).length).toBeLessThan(5_000);
+    expect(inspect(err, { depth: 5 }).length).toBeLessThan(10_000);
+  });
+
   it('sanitizes and preserves structured fields from a create NimbleAgentRunError', async () => {
     const { NimbleAgentRunError } = await import('../src/errors');
     const leaky = new NimbleAgentRunError(`create exposed ${FAKE_KEY}`, {

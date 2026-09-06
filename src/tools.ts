@@ -445,6 +445,19 @@ function safeCreateOutcome(value: unknown): NimbleAgentCreateOutcome | undefined
   return value === 'unknown' || value === 'not-created' ? value : undefined;
 }
 
+function safeRunStatus(value: unknown): string | undefined {
+  return typeof value === 'string' &&
+    (NIMBLE_AGENT_RUN_STATUSES as readonly string[]).includes(value)
+    ? value
+    : undefined;
+}
+
+function isSafeTaskRunId(value: unknown): value is string {
+  return typeof value === 'string' &&
+    value.length <= MAX_RECOVERED_RUN_ID_LENGTH &&
+    /^task_run_[A-Za-z0-9_-]+$/.test(value);
+}
+
 function safeCreateErrorRunId(
   err: NimbleAgentRunError,
   agentId: string,
@@ -457,8 +470,7 @@ function safeCreateErrorRunId(
   } catch {
     return undefined;
   }
-  return runId && runId.length <= MAX_RECOVERED_RUN_ID_LENGTH &&
-    /^task_run_[A-Za-z0-9_-]+$/.test(runId) &&
+  return runId && isSafeTaskRunId(runId) &&
     (returnedAgentId === undefined ||
       (typeof returnedAgentId === 'string' &&
         safeErrorMetadata(returnedAgentId, apiKey) === agentId))
@@ -492,7 +504,7 @@ function toAgentError(
       runId: context.runId,
       agentId: context.agentId,
       runStatus: context.allowErrorDetails
-        ? safeErrorMetadata(safeErrorProperty(err, 'runStatus'), context.apiKey)
+        ? safeRunStatus(safeErrorMetadata(safeErrorProperty(err, 'runStatus'), context.apiKey))
         : undefined,
       status: typeof status === 'number' ? status : undefined,
       createOutcome: safeCreateOutcome(safeErrorProperty(err, 'createOutcome')),
@@ -591,7 +603,7 @@ function toCreateError(
     agentId: context.agentId,
     runStatus:
       context.allowErrorDetails && nimbleError
-        ? safeErrorMetadata(safeErrorProperty(err, 'runStatus'), context.apiKey)
+        ? safeRunStatus(safeErrorMetadata(safeErrorProperty(err, 'runStatus'), context.apiKey))
         : undefined,
     status,
     createOutcome: outcome,
@@ -809,8 +821,7 @@ function safeCreatedRunId(
   if (typeof run !== 'object' || run === null) return undefined;
   const candidate = run as { id?: unknown; web_search_agent_id?: unknown };
   const id = candidate.id;
-  return typeof id === 'string' &&
-    /^task_run_[A-Za-z0-9_-]+$/.test(id) &&
+  return isSafeTaskRunId(id) &&
     candidate.web_search_agent_id === agentId &&
     !containsCredential(id, apiKey)
     ? id
@@ -830,7 +841,7 @@ function snapshotCreatedRun(
   if (
     !hasValidRunFields(candidate, apiKey) ||
     candidate.web_search_agent_id !== agentId ||
-    !/^task_run_[A-Za-z0-9_-]+$/.test(candidate.id)
+    !isSafeTaskRunId(candidate.id)
   ) {
     // The POST was accepted. Preserve a separately validated run handle even
     // when another response field is malformed, so callers can reconcile or

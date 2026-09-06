@@ -57,6 +57,30 @@ describe('run creation is one-shot', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('rejects an oversized accepted run id without exposing it', async () => {
+    const oversizedRunId = `task_run_${'a'.repeat(2_000_000)}`;
+    let attempts = 0;
+    const tool = nimbleAgentStartRunTool({
+      agentId: AGENT_ID,
+      apiKey: FAKE_KEY,
+      client: mockClient({
+        create: async () => {
+          attempts += 1;
+          return makeRun({ id: oversizedRunId });
+        },
+      }),
+    });
+    const err = await tool.execute!({ task: 'research x' }, CTX).then(
+      () => { throw new Error('expected failure'); },
+      (error: unknown) => error as NimbleAgentRunError,
+    );
+    expect(err).toMatchObject({ createOutcome: 'unknown', runId: undefined });
+    expect(String(err).length).toBeLessThan(5_000);
+    expect(JSON.stringify(err).length).toBeLessThan(5_000);
+    expect(inspect(err, { depth: 5 }).length).toBeLessThan(10_000);
+    expect(attempts).toBe(1);
+  });
+
   it.each([
     ['never settles', async () => await new Promise<never>(() => undefined)],
     ['settles late', async () => await new Promise<ReturnType<typeof makeRun>>((resolve) => setTimeout(() => resolve(makeRun()), 50))],
