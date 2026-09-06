@@ -1245,12 +1245,19 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
           if (requestSignal?.aborted) throw abortReason(requestSignal);
           return snapshot;
         } catch (err) {
-          throw toAgentError(requestSignal?.aborted ? requestSignal.reason : err, {
+          const failure = toAgentError(requestSignal?.aborted ? requestSignal.reason : err, {
             verb: 'status check',
             ...ids,
             apiKey,
             allowErrorDetails,
           });
+          // A hostile error accessor can abort the caller while the failure is
+          // being sanitized. Preserve cancellation precedence; internal wait
+          // deadlines are interpreted by the enclosing initial/poll catches.
+          if (signal?.aborted) {
+            throw cancelledRequestError('status check', ids, failure);
+          }
+          throw failure;
         }
       };
 
