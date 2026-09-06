@@ -379,7 +379,10 @@ describe('result tool', () => {
       ...cfg,
       client: mockClient({ get: async () => { throw errorThatAborts(controller); } }),
     }).execute!({ runId: RUN_ID }, { abortSignal: controller.signal } as never))
-      .rejects.toMatchObject({ reason: 'request', runId: RUN_ID, status: 503 });
+      .rejects.toMatchObject({
+        reason: 'request', runId: RUN_ID, status: 503,
+        message: expect.stringContaining('cancelled'),
+      });
   });
 
   it('prioritizes cancellation triggered while sanitizing an initial waiting status failure', async () => {
@@ -389,7 +392,10 @@ describe('result tool', () => {
       client: mockClient({ get: async () => { throw errorThatAborts(controller); } }),
       wait: { timeoutMs: 100, pollIntervalMs: 10 },
     }).execute!({ runId: RUN_ID }, { abortSignal: controller.signal } as never))
-      .rejects.toMatchObject({ reason: 'request', runId: RUN_ID, status: 503 });
+      .rejects.toMatchObject({
+        reason: 'request', runId: RUN_ID, status: 503,
+        message: expect.stringContaining('cancelled'),
+      });
   });
 
   it('prioritizes cancellation triggered while sanitizing a polling status failure', async () => {
@@ -406,7 +412,10 @@ describe('result tool', () => {
       }),
       wait: { timeoutMs: 500, pollIntervalMs: 100 },
     }).execute!({ runId: RUN_ID }, { abortSignal: controller.signal } as never))
-      .rejects.toMatchObject({ reason: 'request', runId: RUN_ID, status: 503 });
+      .rejects.toMatchObject({
+        reason: 'request', runId: RUN_ID, status: 503,
+        message: expect.stringContaining('cancelled'),
+      });
     expect(reads).toBe(2);
   });
 
