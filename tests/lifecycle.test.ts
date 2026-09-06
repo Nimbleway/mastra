@@ -350,6 +350,18 @@ describe('status tool', () => {
 describe('result tool', () => {
   const cfg = { agentId: AGENT_ID, apiKey: TEST_API_KEY };
 
+  function errorThatAborts(controller: AbortController) {
+    const error = Object.assign(new Error('status failed'), { status: 503 });
+    Object.defineProperty(error, 'message', {
+      configurable: true,
+      get() {
+        controller.abort(new Error('caller cancelled'));
+        return 'status failed';
+      },
+    });
+    return error;
+  }
+
   it('does not invoke initial status get for a pre-aborted caller', async () => {
     const controller = new AbortController();
     controller.abort(new Error('caller cancelled'));
@@ -359,6 +371,43 @@ describe('result tool', () => {
       { runId: RUN_ID }, { abortSignal: controller.signal } as never,
     )).rejects.toMatchObject({ reason: 'request' });
     expect(calls).toBe(0);
+  });
+
+  it('prioritizes cancellation triggered while sanitizing a non-waiting status failure', async () => {
+    const controller = new AbortController();
+    await expect(nimbleAgentRunResultTool({
+      ...cfg,
+      client: mockClient({ get: async () => { throw errorThatAborts(controller); } }),
+    }).execute!({ runId: RUN_ID }, { abortSignal: controller.signal } as never))
+      .rejects.toMatchObject({ reason: 'request', runId: RUN_ID, status: 503 });
+  });
+
+  it('prioritizes cancellation triggered while sanitizing an initial waiting status failure', async () => {
+    const controller = new AbortController();
+    await expect(nimbleAgentRunResultTool({
+      ...cfg,
+      client: mockClient({ get: async () => { throw errorThatAborts(controller); } }),
+      wait: { timeoutMs: 100, pollIntervalMs: 10 },
+    }).execute!({ runId: RUN_ID }, { abortSignal: controller.signal } as never))
+      .rejects.toMatchObject({ reason: 'request', runId: RUN_ID, status: 503 });
+  });
+
+  it('prioritizes cancellation triggered while sanitizing a polling status failure', async () => {
+    const controller = new AbortController();
+    let reads = 0;
+    await expect(nimbleAgentRunResultTool({
+      ...cfg,
+      client: mockClient({
+        get: async () => {
+          reads += 1;
+          if (reads === 1) return makeRun({ status: 'running', is_active: true });
+          throw errorThatAborts(controller);
+        },
+      }),
+      wait: { timeoutMs: 500, pollIntervalMs: 100 },
+    }).execute!({ runId: RUN_ID }, { abortSignal: controller.signal } as never))
+      .rejects.toMatchObject({ reason: 'request', runId: RUN_ID, status: 503 });
+    expect(reads).toBe(2);
   });
 
   it('does not invoke result when status snapshotting aborts the caller', async () => {
