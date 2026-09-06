@@ -455,7 +455,7 @@ function safeRunStatus(value: unknown): string | undefined {
 function isSafeTaskRunId(value: unknown): value is string {
   return typeof value === 'string' &&
     value.length <= MAX_RECOVERED_RUN_ID_LENGTH &&
-    /^task_run_[A-Za-z0-9_-]+$/.test(value);
+    /^task_run_(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.test(value);
 }
 
 function safeCreateErrorRunId(

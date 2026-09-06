@@ -81,6 +81,17 @@ describe('run creation is one-shot', () => {
     expect(attempts).toBe(1);
   });
 
+  it('rejects a malformed short accepted run id', async () => {
+    const tool = nimbleAgentStartRunTool({
+      agentId: AGENT_ID,
+      client: mockClient({ create: async () => makeRun({ id: 'task_run_x' }) }),
+    });
+    await expect(tool.execute!({ task: 'research x' }, CTX)).rejects.toMatchObject({
+      createOutcome: 'unknown',
+      runId: undefined,
+    });
+  });
+
   it.each([
     ['never settles', async () => await new Promise<never>(() => undefined)],
     ['settles late', async () => await new Promise<ReturnType<typeof makeRun>>((resolve) => setTimeout(() => resolve(makeRun()), 50))],
