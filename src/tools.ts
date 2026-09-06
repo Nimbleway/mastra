@@ -128,6 +128,7 @@ function scrub(text: string, apiKey: string | undefined): string {
 
 const MAX_TERMINAL_ERROR_DETAIL_LENGTH = 4_096;
 const REDACTED = '[redacted]';
+const MAX_RECOVERED_RUN_ID_LENGTH = 128;
 
 function redactTerminalWindow(text: string, apiKey: string): string {
   let output = '';
@@ -456,7 +457,8 @@ function safeCreateErrorRunId(
   } catch {
     return undefined;
   }
-  return runId && /^task_run_[A-Za-z0-9_-]+$/.test(runId) &&
+  return runId && runId.length <= MAX_RECOVERED_RUN_ID_LENGTH &&
+    /^task_run_[A-Za-z0-9_-]+$/.test(runId) &&
     (returnedAgentId === undefined ||
       (typeof returnedAgentId === 'string' &&
         safeErrorMetadata(returnedAgentId, apiKey) === agentId))
@@ -509,6 +511,23 @@ function toAgentError(
     agentId: context.agentId,
     status: readStatus(err),
     cause: context.allowErrorDetails ? sanitizeCause(err, context.apiKey) : undefined,
+  });
+}
+
+function cancelledRequestError(
+  verb: string,
+  ids: { runId?: string; agentId?: string },
+  failure: NimbleAgentRunError,
+): NimbleAgentRunError {
+  const runRef = ids.runId ? ` (run ${ids.runId})` : '';
+  return new NimbleAgentRunError(`Nimble agent ${verb} was cancelled${runRef}.`, {
+    reason: 'request',
+    runId: ids.runId,
+    agentId: ids.agentId,
+    runStatus: failure.runStatus,
+    status: failure.status,
+    createOutcome: failure.createOutcome,
+    cause: failure.cause,
   });
 }
 
@@ -1136,13 +1155,17 @@ export function nimbleAgentRunStatusTool(config: NimbleAgentToolConfig = {}) {
           signal,
         );
       } catch (err) {
-        throw toAgentError(err, {
+        const failure = toAgentError(err, {
           verb: 'status check',
           runId: input.runId,
           agentId,
           apiKey,
           allowErrorDetails,
         });
+        if (signal?.aborted) {
+          throw cancelledRequestError('status check', { runId: input.runId, agentId }, failure);
+        }
+        throw failure;
       }
       try {
         run = snapshotRun(run, { runId: input.runId, agentId }, apiKey);
@@ -1427,12 +1450,19 @@ export function nimbleAgentRunResultTool(config: NimbleAgentRunResultConfig = {}
           }
           throw protocolError(ids);
         }
-          throw toAgentError(err, {
+          const failure = toAgentError(err, {
             verb: 'result fetch',
             ...ids,
             apiKey,
             allowErrorDetails,
           });
+          if (signal?.aborted) {
+            throw cancelledRequestError('result fetch', ids, failure);
+          }
+          if (wait && (initialDeadlineSignal?.aborted || waitExpired())) {
+            return toTerminalNotReadyOutput(run);
+          }
+          throw failure;
         }
 
       // Enforce cancellation independently of client settlement behavior. An

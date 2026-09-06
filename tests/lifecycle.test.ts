@@ -266,6 +266,30 @@ describe('status tool', () => {
     await expect(pending).rejects.toMatchObject({ reason: 'request', runId: RUN_ID });
   });
 
+  it('prioritizes cancellation triggered while sanitizing a status failure', async () => {
+    const controller = new AbortController();
+    const error = Object.assign(new Error('status failed'), { status: 503 });
+    Object.defineProperty(error, 'message', {
+      configurable: true,
+      get() {
+        controller.abort(new Error('caller cancelled'));
+        return 'status failed';
+      },
+    });
+    await expect(nimbleAgentRunStatusTool({
+      agentId: AGENT_ID,
+      apiKey: TEST_API_KEY,
+      client: mockClient({ get: async () => { throw error; } }),
+    }).execute!({ runId: RUN_ID }, { abortSignal: controller.signal } as never))
+      .rejects.toMatchObject({
+        reason: 'request',
+        runId: RUN_ID,
+        agentId: AGENT_ID,
+        status: 503,
+        message: expect.stringContaining('cancelled'),
+      });
+  });
+
   it('does not invoke standalone status get for a pre-aborted caller', async () => {
     const controller = new AbortController();
     controller.abort(new Error('caller cancelled'));
@@ -447,6 +471,29 @@ describe('result tool', () => {
         const deadline = performance.now() + 30;
         while (performance.now() < deadline) { /* deliberately block */ }
         return 409;
+      },
+    });
+    await expect(nimbleAgentRunResultTool({
+      ...cfg,
+      client: mockClient({
+        get: async () => makeRun({ status: 'completed', is_active: false }),
+        result: async () => { throw error; },
+      }),
+      wait: { timeoutMs: 10, pollIntervalMs: 100 },
+    }).execute!({ runId: RUN_ID }, CTX)).resolves.toMatchObject({
+      ready: false, status: 'completed', isActive: false,
+    });
+  });
+
+  it('honors the deadline crossed while sanitizing a generic result failure', async () => {
+    const error = new Error('result failed') as Error & { status: number };
+    error.status = 500;
+    Object.defineProperty(error, 'message', {
+      configurable: true,
+      get() {
+        const deadline = performance.now() + 30;
+        while (performance.now() < deadline) { /* deliberately block */ }
+        return 'result failed';
       },
     });
     await expect(nimbleAgentRunResultTool({

@@ -874,6 +874,28 @@ describe('the API key stays server-only', () => {
     expect(err.runId).toBeUndefined();
   });
 
+  it('drops an oversized recovered create run id before model-visible formatting', async () => {
+    const oversizedRunId = `task_run_${'a'.repeat(2_000_000)}`;
+    const failure = new NimbleAgentRunError('create failed', {
+      reason: 'request',
+      runId: oversizedRunId,
+      agentId: AGENT_ID,
+      createOutcome: 'unknown',
+    });
+    const err = await nimbleAgentStartRunTool({
+      agentId: AGENT_ID,
+      apiKey: FAKE_KEY,
+      client: mockClient({ create: async () => { throw failure; } }),
+    }).execute!({ task: 't' }, CTX).then(
+      () => { throw new Error('expected failure'); },
+      (caught: unknown) => caught as NimbleAgentRunError,
+    );
+    expect(err).toMatchObject({ agentId: AGENT_ID, createOutcome: 'unknown' });
+    expect(err.runId).toBeUndefined();
+    expect(err.message.length).toBeLessThan(5_000);
+    expect(JSON.stringify(err).length).toBeLessThan(5_000);
+  });
+
   it('drops a valid-looking run id when supplied agent metadata is unsafe', async () => {
     const { NimbleAgentRunError } = await import('../src/errors');
     const unsafeAgent = new NimbleAgentRunError('create failed', {
