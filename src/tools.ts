@@ -461,9 +461,15 @@ function canonicalAgentId(value: string): string {
   return value.toLowerCase().replace(/-/g, '');
 }
 
-/** Untrusted-input-safe agent identity comparison. */
+/**
+ * Untrusted-input-safe agent identity comparison. The value must be one of the
+ * two accepted wire formats before canonicalising: stripping hyphens alone
+ * would let arbitrary hyphen placement compare equal to a valid id.
+ */
 function isSameAgent(value: unknown, agentId: string): boolean {
-  return typeof value === 'string' && canonicalAgentId(value) === canonicalAgentId(agentId);
+  return typeof value === 'string' &&
+    NIMBLE_AGENT_ID_PATTERN.test(value) &&
+    canonicalAgentId(value) === canonicalAgentId(agentId);
 }
 
 function isSafeTaskRunId(value: unknown): value is string {
@@ -487,7 +493,7 @@ function safeCreateErrorRunId(
   return runId && isSafeTaskRunId(runId) &&
     (returnedAgentId === undefined ||
       (typeof returnedAgentId === 'string' &&
-        safeErrorMetadata(returnedAgentId, apiKey) === agentId))
+        isSameAgent(safeErrorMetadata(returnedAgentId, apiKey), agentId)))
     ? runId
     : undefined;
 }

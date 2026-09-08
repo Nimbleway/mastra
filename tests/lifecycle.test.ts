@@ -235,6 +235,8 @@ describe('status tool', () => {
   it.each([
     ['run id', { id: 'task_run_wrong' }],
     ['agent id', { web_search_agent_id: 'wsa_wrong' }],
+    // Canonicalising by stripping hyphens must not let arbitrary placement pass.
+    ['malformed agent id', { web_search_agent_id: 'wsa_1111-1111-2222-3333-4444-555555555555' }],
   ])('fails closed on a mismatched returned %s', async (_label, patch) => {
     const client = mockClient({ get: async () => makeRun(patch) });
     await expect(
@@ -1198,6 +1200,7 @@ describe('result tool', () => {
   it.each([
     ['run id', { id: 'task_run_wrong' }],
     ['agent id', { web_search_agent_id: 'wsa_wrong' }],
+    ['malformed agent id', { web_search_agent_id: 'wsa_1111-1111-2222-3333-4444-555555555555' }],
   ])('fails closed when a completed result returns a mismatched %s', async (_label, patch) => {
     const client = mockClient({
       get: async () => makeRun({ status: 'completed', is_active: false }),

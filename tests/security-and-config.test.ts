@@ -874,6 +874,23 @@ describe('the API key stays server-only', () => {
     expect(err.runId).toBeUndefined();
   });
 
+  it('keeps a recovered create run id reported in the equivalent agent id format', async () => {
+    const { NimbleAgentRunError } = await import('../src/errors');
+    // Same agent, dashless form. The handle must survive so a possibly billed
+    // run can still be reconciled.
+    const equivalent = new NimbleAgentRunError('create failed', {
+      reason: 'request', runId: RUN_ID, agentId: AGENT_ID.replace(/-/g, ''), createOutcome: 'unknown',
+    });
+    const err = await nimbleAgentStartRunTool({
+      agentId: AGENT_ID, apiKey: FAKE_KEY,
+      client: mockClient({ create: async () => { throw equivalent; } }),
+    }).execute!({ task: 't' }, CTX).then(
+      () => { throw new Error('expected failure'); },
+      (e: unknown) => e as NimbleAgentRunError,
+    );
+    expect(err.runId).toBe(RUN_ID);
+  });
+
   it('drops an oversized recovered create run id before model-visible formatting', async () => {
     const oversizedRunId = `task_run_${'a'.repeat(2_000_000)}`;
     const failure = new NimbleAgentRunError('create failed', {
