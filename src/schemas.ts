@@ -140,9 +140,15 @@ export type NimbleAgentTrust = z.infer<typeof nimbleAgentTrustSchema>;
 
 const effortSchema = z.enum(NIMBLE_AGENT_EFFORTS);
 const lifecycleStatusSchema = z.enum(NIMBLE_AGENT_RUN_STATUSES);
-const agentIdSchema = z.string().regex(
-  /^wsa_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
-);
+/**
+ * The Agent API issues agent ids as dashless 32-hex; the hyphenated UUID form
+ * denotes the same agent. Accept either, and compare on one canonical form.
+ * Shared with the config check in `tools.ts` so the two cannot drift apart.
+ */
+export const NIMBLE_AGENT_ID_PATTERN =
+  /^wsa_(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+
+const agentIdSchema = z.string().regex(NIMBLE_AGENT_ID_PATTERN);
 
 /** Output of the start-run tool: the handle needed to resume later. */
 export const nimbleAgentStartRunOutputSchema = z.object({
@@ -248,7 +254,8 @@ export type NimbleAgentRunResultOutput = z.infer<typeof nimbleAgentRunResultOutp
 /** Config shared by all three agent tool factories. */
 export interface NimbleAgentToolConfig {
   /**
-   * The Web Search Agent instance to run (format `wsa_<uuid>`), created once
+   * The Web Search Agent instance to run (`wsa_` plus a 32-hex id, or the
+   * equivalent hyphenated UUID), created once
    * via the Nimble console or API. Defaults to `process.env.NIMBLE_AGENT_ID`.
    * Resolved at execute time; the model can never choose the agent.
    */
