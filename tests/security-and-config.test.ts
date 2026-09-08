@@ -874,6 +874,23 @@ describe('the API key stays server-only', () => {
     expect(err.runId).toBeUndefined();
   });
 
+  it('keeps a recovered create run id reported in the equivalent agent id format', async () => {
+    const { NimbleAgentRunError } = await import('../src/errors');
+    // Same agent, dashless form. The handle must survive so a possibly billed
+    // run can still be reconciled.
+    const equivalent = new NimbleAgentRunError('create failed', {
+      reason: 'request', runId: RUN_ID, agentId: AGENT_ID.replace(/-/g, ''), createOutcome: 'unknown',
+    });
+    const err = await nimbleAgentStartRunTool({
+      agentId: AGENT_ID, apiKey: FAKE_KEY,
+      client: mockClient({ create: async () => { throw equivalent; } }),
+    }).execute!({ task: 't' }, CTX).then(
+      () => { throw new Error('expected failure'); },
+      (e: unknown) => e as NimbleAgentRunError,
+    );
+    expect(err.runId).toBe(RUN_ID);
+  });
+
   it('drops an oversized recovered create run id before model-visible formatting', async () => {
     const oversizedRunId = `task_run_${'a'.repeat(2_000_000)}`;
     const failure = new NimbleAgentRunError('create failed', {
@@ -1146,7 +1163,16 @@ describe('createNimbleAgentTools (convenience factory)', () => {
     vi.unstubAllEnvs();
   });
 
-  it.each(['not-an-agent', 'wsa_foo', 'wsa_not-a-uuid', FAKE_KEY])('rejects unsafe agent id %s before any request', async (agentId) => {
+  it.each([
+    'not-an-agent',
+    'wsa_foo',
+    'wsa_not-a-uuid',
+    FAKE_KEY,
+    // Near misses on the two accepted shapes: 31 hex, 33 hex, misplaced dashes.
+    'wsa_1234567890abcdef1234567890abcde',
+    'wsa_1234567890abcdef1234567890abcdeff',
+    'wsa_1234567-890ab-cdef-1234-567890abcdef',
+  ])('rejects unsafe agent id %s before any request', async (agentId) => {
     const fetchMock = vi.fn(async () => jsonResponse(500, {}));
     const err = await nimbleAgentStartRunTool({
       agentId,
@@ -1180,4 +1206,69 @@ describe('createNimbleAgentTools (convenience factory)', () => {
     expect(inspect(err, { depth: 5 })).not.toContain(FAKE_KEY);
     vi.unstubAllEnvs();
   });
+});
+
+/**
+ * Agent ids arrive in two shapes. `GET /v2/agents` issues `id` as `wsa_` plus a
+ * dashless 32-hex string, while the SDK's own type documents it as
+ * `wsa_<uuid>`. `0.1.0` accepted only the documented form, so every real id was
+ * rejected. Both forms denote the same agent and both must work.
+ *
+ * Both shapes are asserted because the service and the SDK type disagree about
+ * which one is canonical.
+ */
+describe('agent id accepts both issued formats', () => {
+  const DASHLESS = 'wsa_1234567890abcdef1234567890abcdef';
+  const HYPHENATED = 'wsa_12345678-90ab-cdef-1234-567890abcdef';
+
+  /** One item of a real `GET /v2/agents` page, trimmed to the fields used here. */
+  const agentListItem = {
+    id: DASHLESS,
+    created_at: '2026-08-04T09:59:00Z',
+    description: 'Research agent',
+    display_name: 'Research',
+    effort: 'low' as const,
+    icon: 'search',
+  };
+
+  it.each([
+    ['dashless, as GET /v2/agents issues it', DASHLESS],
+    ['hyphenated, as the SDK type documents it', HYPHENATED],
+  ])('starts a run with an id that is %s', async (_label, agentId) => {
+    const client = mockClient({
+      create: async () => makeRun({ web_search_agent_id: agentListItem.id }),
+    });
+    const out = (await nimbleAgentStartRunTool({ agentId, apiKey: FAKE_KEY, client })
+      .execute!({ task: 't' }, CTX)) as { runId: string };
+    expect(out.runId).toBe(RUN_ID);
+  });
+
+  it('retrieves the result by runId after starting with the dashless id', async () => {
+    const client = mockClient({
+      create: async () => makeRun({ web_search_agent_id: agentListItem.id }),
+      get: async () => makeRun({ web_search_agent_id: agentListItem.id, status: 'completed', is_active: false }),
+      result: async () => makeTextResult({ web_search_agent_id: agentListItem.id }),
+    });
+    const cfg = { agentId: DASHLESS, apiKey: FAKE_KEY, client };
+    const started = (await nimbleAgentStartRunTool(cfg).execute!({ task: 't' }, CTX)) as { runId: string };
+    const result = (await nimbleAgentRunResultTool(cfg).execute!({ runId: started.runId }, CTX)) as
+      NimbleAgentRunCompletedOutput;
+    expect(result.ready).toBe(true);
+    expect(result.output.type).toBe('text');
+  });
+
+  // The case that would otherwise bill a run and then discard its handle: the
+  // caller configures one form and the service echoes back the other.
+  it('reconciles a hyphenated configured id against a dashless response', async () => {
+    const client = mockClient({
+      create: async () => makeRun({ web_search_agent_id: DASHLESS }),
+      get: async () => makeRun({ web_search_agent_id: DASHLESS }),
+    });
+    const cfg = { agentId: HYPHENATED, apiKey: FAKE_KEY, client };
+    const started = (await nimbleAgentStartRunTool(cfg).execute!({ task: 't' }, CTX)) as { runId: string };
+    expect(started.runId).toBe(RUN_ID);
+    const status = (await nimbleAgentRunStatusTool(cfg).execute!({ runId: RUN_ID }, CTX)) as { runId: string };
+    expect(status.runId).toBe(RUN_ID);
+  });
+
 });
