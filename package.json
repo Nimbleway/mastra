@@ -1,6 +1,6 @@
 {
   "name": "@nimble-way/mastra",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Nimble deep-research Agent runs (Agent API V2) as ready-made typed tools for Mastra agents.",
   "type": "module",
   "license": "Apache-2.0",
