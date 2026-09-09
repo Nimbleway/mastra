@@ -39,7 +39,7 @@ const researcher = new Agent({
   instructions:
     'For deep research questions, start a Nimble agent run, tell the user the ' +
     'runId, and fetch the result when they ask for it later.',
-  model: 'anthropic/claude-sonnet-4.6',
+  model: 'anthropic/claude-sonnet-4-6',
   // One shared API key + agent configuration for all three tools:
   tools: createNimbleAgentTools({
     agentId: process.env.NIMBLE_AGENT_ID, // wsa_… instance, created once in the Nimble console
