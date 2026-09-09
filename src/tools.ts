@@ -1,6 +1,7 @@
 import { createTool } from '@mastra/core/tools';
 import { createNimbleClient } from './client';
 import {
+  NIMBLE_AGENT_ID_PATTERN,
   NIMBLE_AGENT_RUN_STATUSES,
   NIMBLE_AGENT_EFFORTS,
   nimbleAgentRunIdInputSchema,
@@ -452,6 +453,25 @@ function safeRunStatus(value: unknown): string | undefined {
     : undefined;
 }
 
+/**
+ * Dashless 32-hex and hyphenated UUID agent ids denote the same agent, so every
+ * identity comparison runs on one canonical form rather than on the raw string.
+ */
+function canonicalAgentId(value: string): string {
+  return value.toLowerCase().replace(/-/g, '');
+}
+
+/**
+ * Untrusted-input-safe agent identity comparison. The value must be one of the
+ * two accepted wire formats before canonicalising: stripping hyphens alone
+ * would let arbitrary hyphen placement compare equal to a valid id.
+ */
+function isSameAgent(value: unknown, agentId: string): boolean {
+  return typeof value === 'string' &&
+    NIMBLE_AGENT_ID_PATTERN.test(value) &&
+    canonicalAgentId(value) === canonicalAgentId(agentId);
+}
+
 function isSafeTaskRunId(value: unknown): value is string {
   return typeof value === 'string' &&
     value.length <= MAX_RECOVERED_RUN_ID_LENGTH &&
@@ -473,7 +493,7 @@ function safeCreateErrorRunId(
   return runId && isSafeTaskRunId(runId) &&
     (returnedAgentId === undefined ||
       (typeof returnedAgentId === 'string' &&
-        safeErrorMetadata(returnedAgentId, apiKey) === agentId))
+        isSameAgent(safeErrorMetadata(returnedAgentId, apiKey), agentId)))
     ? runId
     : undefined;
 }
@@ -669,9 +689,14 @@ function resolveAgentContext(config: NimbleAgentToolConfig, factory: string): Ag
         'Create an agent instance once via the Nimble console or POST /v2/agents.',
     );
   }
-  if (!/^wsa_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(configuredAgentId)) {
-    throw new NimbleConfigError('Invalid Nimble agent id: expected wsa_<uuid>.');
+  if (!NIMBLE_AGENT_ID_PATTERN.test(configuredAgentId)) {
+    throw new NimbleConfigError(
+      'Invalid Nimble agent id: expected wsa_ followed by a 32-hex id or the equivalent UUID.',
+    );
   }
+  // Kept as supplied (lower-cased only), so errors and outputs echo back the
+  // id the caller actually configured. Identity comparisons canonicalise both
+  // sides instead, which is what makes the two formats interchangeable.
   const agentId = configuredAgentId.toLowerCase();
   if (config.client) {
     // Only an explicitly paired key can be assumed to belong to an injected
@@ -776,7 +801,7 @@ function assertMatchingRunIds(
   }
   if (hasUnsafeAccessors(run)) throw protocolError(ids);
   const candidate = run as Partial<NimbleAgentRawRun>;
-  if (candidate.id !== ids.runId || candidate.web_search_agent_id !== ids.agentId) {
+  if (candidate.id !== ids.runId || !isSameAgent(candidate.web_search_agent_id, ids.agentId)) {
     throw new NimbleAgentRunError(
       `Nimble agent run ${ids.runId} returned mismatched identifiers.`,
       { reason: 'protocol', runId: ids.runId, agentId: ids.agentId },
@@ -822,7 +847,7 @@ function safeCreatedRunId(
   const candidate = run as { id?: unknown; web_search_agent_id?: unknown };
   const id = candidate.id;
   return isSafeTaskRunId(id) &&
-    candidate.web_search_agent_id === agentId &&
+    isSameAgent(candidate.web_search_agent_id, agentId) &&
     !containsCredential(id, apiKey)
     ? id
     : undefined;
@@ -840,7 +865,7 @@ function snapshotCreatedRun(
   const candidate = snapshot.value as NimbleAgentRawRun;
   if (
     !hasValidRunFields(candidate, apiKey) ||
-    candidate.web_search_agent_id !== agentId ||
+    !isSameAgent(candidate.web_search_agent_id, agentId) ||
     !isSafeTaskRunId(candidate.id)
   ) {
     // The POST was accepted. Preserve a separately validated run handle even
